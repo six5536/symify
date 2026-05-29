@@ -1,0 +1,22 @@
+{
+  "name": "@six5536/symify-workspace",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "cargo build --workspace",
+    "dev": "cargo run -p symify --",
+    "test": "cargo nextest run --workspace",
+    "check": "cargo check --workspace --tests",
+    "lint": "cargo clippy --workspace",
+    "fmt": "cargo fmt --all",
+    "test:launcher": "node --test packages/symify/test/*.test.js",
+    "set-version": "node scripts/set-version.mjs",
+    "codegen": "cargo typify --no-builder --additional-derive Clone --additional-derive PartialEq --additional-derive Eq schema/symify.schema.json --output crates/lib/symify-core/src/model/generated.rs",
+    "codegen:check": "npm run codegen && git diff --exit-code -- crates/lib/symify-core/src/model/generated.rs"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.5"
+  }
+}

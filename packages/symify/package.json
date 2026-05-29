@@ -1,0 +1,25 @@
+{
+  "name": "@six5536/symify",
+  "version": "0.1.0",
+  "description": "Keep a working location in sync with a managed backing repository via symlinks, hardlinks, or copies.",
+  "bin": {
+    "symify": "bin/symify.js"
+  },
+  "files": [
+    "bin/",
+    "lib/"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@six5536/symify-linux-x64": "0.1.0",
+    "@six5536/symify-linux-arm64": "0.1.0",
+    "@six5536/symify-darwin-x64": "0.1.0",
+    "@six5536/symify-darwin-arm64": "0.1.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

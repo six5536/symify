@@ -1,0 +1,15 @@
+{
+  "name": "@six5536/symify-linux-arm64",
+  "version": "0.1.0",
+  "description": "Prebuilt symify binary for linux-arm64.",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin/"
+  ],
+  "license": "MIT"
+}

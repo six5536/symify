@@ -1,0 +1,15 @@
+{
+  "name": "@six5536/symify-darwin-x64",
+  "version": "0.1.0",
+  "description": "Prebuilt symify binary for darwin-x64.",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/"
+  ],
+  "license": "MIT"
+}

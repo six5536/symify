@@ -1,0 +1,29 @@
+[package]
+name = "symify"
+description = "CLI that keeps a working location in sync with a managed backing repository via symlinks, hardlinks, or copies."
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+readme.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "symify"
+path = "src/main.rs"
+
+[dependencies]
+symify-core.workspace = true
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+tempfile = { workspace = true }
+insta = { workspace = true }
+serde_json = { workspace = true }

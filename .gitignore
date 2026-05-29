@@ -1,0 +1,18 @@
+/target
+**/*.rs.bk
+/.vs
+/.idea
+/.vscode/mise-tools
+/.DS_Store
+/.playwright-mcp
+
+# WASM and TypeScript build artifacts
+*.tsbuildinfo
+/packages/*/wasm/
+/packages/*/dist/
+/packages/*/node_modules/
+/node_modules/
+
+/.cache/
+*.local.json
+.mise.local.toml

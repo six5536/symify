@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/six5536/symify/schema/symify.schema.json",
+  "title": "Config",
+  "description": "symify configuration — a single symify.toml / conf.d/*.toml file. Source of truth for both the Rust config types (via typify) and editor TOML validation. See specs/ARCHITECTURE.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "settings": { "$ref": "#/$defs/Settings" },
+    "mappings": {
+      "type": "object",
+      "description": "Map of mapping name -> mapping.",
+      "additionalProperties": { "$ref": "#/$defs/Mapping" }
+    }
+  },
+  "$defs": {
+    "Mode": {
+      "title": "Mode",
+      "description": "Link mechanism.",
+      "type": "string",
+      "enum": ["symlink", "hardlink", "sync"]
+    },
+    "Conflict": {
+      "title": "Conflict",
+      "description": "What to do when the side being written already exists and differs.",
+      "type": "string",
+      "enum": ["skip", "replace", "backup"]
+    },
+    "LinkValue": {
+      "title": "LinkValue",
+      "description": "A link entry value: \"\" or true mirrors the key under store; \"<path>\" is an explicit store path (relative to store, or absolute); false disables the entry.",
+      "oneOf": [{ "type": "string" }, { "type": "boolean" }]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Defaults applied to every mapping; each mapping may override them.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "live": {
+          "type": "string",
+          "description": "Working location where links/copies appear (e.g. \"~\")."
+        },
+        "store": {
+          "type": "string",
+          "description": "Backing repository that holds the real content (e.g. \"~/dotfiles\")."
+        },
+        "mode": { "$ref": "#/$defs/Mode" },
+        "conflict": { "$ref": "#/$defs/Conflict" }
+      }
+    },
+    "Mapping": {
+      "title": "Mapping",
+      "description": "A named group of links, with optional per-group overrides.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "live": { "type": "string" },
+        "store": { "type": "string" },
+        "mode": { "$ref": "#/$defs/Mode" },
+        "conflict": { "$ref": "#/$defs/Conflict" },
+        "links": {
+          "type": "object",
+          "description": "Map of live-relative (or absolute) key -> link value.",
+          "additionalProperties": { "$ref": "#/$defs/LinkValue" }
+        }
+      }
+    }
+  }
+}
