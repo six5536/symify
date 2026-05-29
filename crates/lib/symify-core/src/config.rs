@@ -5,7 +5,7 @@
 //! produce a [`ResolvedConfig`] the planner can consume. [`load_config`] runs all
 //! three. See `specs/ARCHITECTURE.md` (Configuration).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
@@ -88,6 +88,99 @@ pub fn load_config(cli_configs: &[PathBuf]) -> Result<ResolvedConfig> {
     let paths = discover(cli_configs)?;
     let config = load(&paths)?;
     resolve(config)
+}
+
+/// Result of [`ensure_config`]: the config files to use, and the path of any
+/// config that was auto-created so the caller can report it.
+#[derive(Debug, Clone)]
+pub struct Discovered {
+    /// The config files to load (in order).
+    pub paths: Vec<PathBuf>,
+    /// Set when a default config was just auto-created.
+    pub created: Option<PathBuf>,
+}
+
+/// Like [`discover`], but in default mode (no `-c`) auto-creates the default
+/// config from the starter template when none exists, so every command has
+/// something to work with. An explicitly-named (`-c`) but missing file is left
+/// to fail later, not auto-created.
+pub fn ensure_config(cli_configs: &[PathBuf]) -> Result<Discovered> {
+    let paths = discover(cli_configs)?;
+    if !paths.is_empty() || !cli_configs.is_empty() {
+        return Ok(Discovered {
+            paths,
+            created: None,
+        });
+    }
+
+    let path = default_config_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
+    }
+    std::fs::write(&path, render_starter("~", "~/dotfiles")).map_err(|e| Error::io(&path, e))?;
+    Ok(Discovered {
+        paths: discover(cli_configs)?,
+        created: Some(path),
+    })
+}
+
+/// Restrict a resolved config to the named mappings, preserving order. Empty
+/// `names` returns the config unchanged; an unknown name is an error.
+pub fn select(config: ResolvedConfig, names: &[String]) -> Result<ResolvedConfig> {
+    if names.is_empty() {
+        return Ok(config);
+    }
+    let known: HashSet<&str> = config.mappings.iter().map(|m| m.name.as_str()).collect();
+    for name in names {
+        if !known.contains(name.as_str()) {
+            return Err(Error::config(format!("unknown mapping `{name}`")));
+        }
+    }
+    let want: HashSet<&str> = names.iter().map(String::as_str).collect();
+    let mappings = config
+        .mappings
+        .into_iter()
+        .filter(|m| want.contains(m.name.as_str()))
+        .collect();
+    Ok(ResolvedConfig { mappings })
+}
+
+/// The default config path: `$XDG_CONFIG_HOME/symify/symify.toml` or
+/// `~/.config/symify/symify.toml`.
+pub fn default_config_path() -> Result<PathBuf> {
+    Ok(config_base_dir()?.join("symify.toml"))
+}
+
+/// URL of the published JSON Schema, embedded in generated configs so editors
+/// (taplo / VS Code) can validate and autocomplete them.
+pub const SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/six5536/symify/main/schema/symify.schema.json";
+
+/// Render an annotated starter `symify.toml` with the given roots. The result is
+/// always a valid config that loads to an empty set of links (the examples are
+/// commented out).
+pub fn render_starter(live: &str, store: &str) -> String {
+    format!(
+        r#"#:schema {SCHEMA_URL}
+
+# symify configuration.
+# Preview with `symify status`, then capture your files with `symify sync`.
+
+[settings]
+live = "{live}"          # where your files are used
+store = "{store}"        # where the real content is kept (commit this to git)
+mode = "symlink"         # symlink | hardlink | sync (sync = independent copy)
+conflict = "backup"      # skip | replace | backup (.<timestamp>.bak)
+
+# Each entry maps a path (relative to `live`) to how it lives in `store`:
+#   true / ""   mirror the key under `store`
+#   "path"      an explicit path under `store`
+#   false       disable the entry
+[mappings.dotfiles.links]
+# ".bashrc" = true
+# ".config/fish/config.fish" = true
+"#
+    )
 }
 
 fn parse_file(path: &Path) -> Result<Config> {
@@ -223,6 +316,13 @@ fn pick_root(
                 "mapping `{name}` is missing `{field}` (no mapping or [settings] value)"
             ))
         })
+}
+
+/// Expand `~`/env in a path string and make it absolute, using the process's
+/// home directory. Convenience over [`expand_path`] for callers (like the CLI)
+/// that don't carry a home around.
+pub fn expand_root(raw: &str) -> Result<PathBuf> {
+    expand_path(raw, home_dir().ok().as_deref())
 }
 
 /// Expand `~` and `$VAR`/`${VAR}`, then make the path absolute.
@@ -435,6 +535,17 @@ mod tests {
     }
 
     #[test]
+    fn starter_template_is_valid_and_carries_roots() {
+        let text = render_starter("~", "~/dotfiles");
+        let cfg: Config = toml::from_str(&text).expect("starter template parses");
+        let s = cfg.settings.unwrap();
+        assert_eq!(s.live.as_deref(), Some("~"));
+        assert_eq!(s.store.as_deref(), Some("~/dotfiles"));
+        // Example links are commented out, so the mapping has no entries.
+        assert!(cfg.mappings["dotfiles"].links.is_empty());
+    }
+
+    #[test]
     fn discover_cli_configs_replace_defaults() {
         let cli = vec![PathBuf::from("/tmp/custom.toml")];
         assert_eq!(discover(&cli).unwrap(), cli);
@@ -460,5 +571,51 @@ mod tests {
                 conf_d.join("20-b.toml"),
             ]
         );
+    }
+
+    #[test]
+    fn select_keeps_named_mappings_and_errors_on_unknown() {
+        let cfg = resolve(cfg(r#"[settings]
+            live = "/l"
+            store = "/s"
+            [mappings.a.links]
+            x = true
+            [mappings.b.links]
+            y = true
+            [mappings.c.links]
+            z = true"#))
+        .unwrap();
+
+        // empty -> unchanged
+        assert_eq!(select(cfg.clone(), &[]).unwrap().mappings.len(), 3);
+
+        // subset, order preserved (resolved order is sorted: a, b, c)
+        let sub = select(cfg.clone(), &["c".into(), "a".into()]).unwrap();
+        let names: Vec<&str> = sub.mappings.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, ["a", "c"]);
+
+        // unknown name errors
+        assert!(select(cfg, &["nope".into()]).is_err());
+    }
+
+    #[test]
+    fn ensure_config_auto_inits_then_is_a_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        // SAFETY: nextest runs each test in its own process.
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", dir.path());
+        }
+        let expected = dir.path().join("symify").join("symify.toml");
+
+        let first = ensure_config(&[]).unwrap();
+        assert_eq!(first.created.as_deref(), Some(expected.as_path()));
+        assert!(expected.is_file());
+        // the auto-created config is valid and resolves
+        resolve(load(&first.paths).unwrap()).unwrap();
+
+        // second call finds it; nothing created
+        let second = ensure_config(&[]).unwrap();
+        assert!(second.created.is_none());
+        assert_eq!(second.paths, vec![expected]);
     }
 }

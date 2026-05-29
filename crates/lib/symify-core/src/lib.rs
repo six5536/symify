@@ -7,6 +7,7 @@
 
 pub mod clock;
 pub mod config;
+pub mod edit;
 pub mod error;
 pub mod fs;
 pub mod model;
@@ -14,5 +15,5 @@ pub mod plan;
 pub mod status;
 
 pub use error::{Error, Result};
-pub use plan::{Action, ActionKind, FsOp, Outcome, Planned, Verb, execute, plan};
+pub use plan::{Action, ActionKind, FsOp, Outcome, Planned, Verb, entry_paths, execute, plan};
 pub use status::{StatusEntry, StatusLabel, status};

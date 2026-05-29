@@ -4,10 +4,13 @@
 //! Exit codes: `0` clean / success, `1` drift (unresolved conflicts, or any
 //! out-of-sync entry for `status`), `2` one or more failures.
 
+use std::path::{Path, PathBuf};
+
 use serde::Serialize;
+use symify_core::config::ResolvedConfig;
 use symify_core::model::Mode;
 use symify_core::status::{StatusEntry, StatusLabel};
-use symify_core::{ActionKind, Outcome, Planned, Verb};
+use symify_core::{ActionKind, Outcome, Planned, Verb, entry_paths};
 
 /// Exit code: success / clean.
 pub const EXIT_OK: u8 = 0;
@@ -302,4 +305,215 @@ pub fn render_status(entries: &[StatusEntry], json: bool) -> u8 {
     } else {
         EXIT_OK
     }
+}
+
+// ----- add / remove / list ----------------------------------------------
+
+/// Map a single adopt/restore outcome to (symbol, word) and an exit code.
+fn outcome_word(o: &Outcome) -> &'static str {
+    match o {
+        Outcome::Applied(k) => action_word(*k),
+        Outcome::AlreadyOk => "ok",
+        Outcome::Disabled => "disabled",
+        Outcome::Skipped(_) => "skipped",
+        Outcome::Conflict => "conflict",
+        Outcome::Failed(_) => "failed",
+    }
+}
+
+fn outcome_exit(o: &Outcome) -> u8 {
+    match o {
+        Outcome::Failed(_) => EXIT_FAILURE,
+        Outcome::Conflict => EXIT_DRIFT,
+        _ => EXIT_OK,
+    }
+}
+
+#[derive(Serialize)]
+struct AddJson<'a> {
+    action: &'static str,
+    mapping: &'a str,
+    key: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file: Option<String>,
+    status: &'a str,
+    adopt: &'static str,
+    dry_run: bool,
+}
+
+/// Render the result of `add`; returns the exit code.
+#[allow(clippy::too_many_arguments)]
+pub fn render_add(
+    mapping: &str,
+    key: &str,
+    file: Option<&Path>,
+    status: &str,
+    adopt: &Outcome,
+    dry_run: bool,
+    json: bool,
+) -> u8 {
+    if json {
+        let doc = AddJson {
+            action: "add",
+            mapping,
+            key,
+            file: file.map(|p| p.display().to_string()),
+            status,
+            adopt: outcome_word(adopt),
+            dry_run,
+        };
+        println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+    } else {
+        let prefix = if dry_run { "would add" } else { "added" };
+        match file {
+            Some(f) => println!("{prefix} {key} to {mapping} ({})", f.display()),
+            None => println!("{prefix} {key} to {mapping}"),
+        }
+        if status == "unchanged" {
+            println!("  (already present)");
+        }
+        let done = if dry_run { "would adopt" } else { "adopted" };
+        match adopt {
+            Outcome::Applied(_) => println!("  {done}"),
+            Outcome::AlreadyOk => println!("  already in sync"),
+            Outcome::Conflict => println!("  conflict — not adopted (resolve, then sync)"),
+            Outcome::Failed(m) => println!("  failed to adopt: {m}"),
+            Outcome::Skipped(r) => println!("  not adopted: {r}"),
+            Outcome::Disabled => {}
+        }
+    }
+    outcome_exit(adopt)
+}
+
+#[derive(Serialize)]
+struct RemoveJson<'a> {
+    action: &'static str,
+    mapping: &'a str,
+    key: &'a str,
+    files: Vec<String>,
+    restored: bool,
+    dry_run: bool,
+}
+
+/// Render the result of `remove`; returns the exit code.
+pub fn render_remove(
+    mapping: &str,
+    key: &str,
+    files: &[PathBuf],
+    restored: bool,
+    dry_run: bool,
+    json: bool,
+) -> u8 {
+    if json {
+        let doc = RemoveJson {
+            action: "remove",
+            mapping,
+            key,
+            files: files.iter().map(|p| p.display().to_string()).collect(),
+            restored,
+            dry_run,
+        };
+        println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+    } else {
+        let prefix = if dry_run { "would remove" } else { "removed" };
+        if files.is_empty() {
+            println!("{prefix} {key} from {mapping}");
+        } else {
+            let list: Vec<String> = files.iter().map(|p| p.display().to_string()).collect();
+            println!("{prefix} {key} from {mapping} ({})", list.join(", "));
+        }
+        if restored {
+            let r = if dry_run { "would restore" } else { "restored" };
+            println!("  {r}: standalone copy at the live path");
+        }
+    }
+    EXIT_OK
+}
+
+#[derive(Serialize)]
+struct ListJson {
+    mappings: Vec<ListMappingJson>,
+}
+
+#[derive(Serialize)]
+struct ListMappingJson {
+    name: String,
+    live: String,
+    store: String,
+    mode: &'static str,
+    conflict: &'static str,
+    entries: Vec<ListEntryJson>,
+}
+
+#[derive(Serialize)]
+struct ListEntryJson {
+    key: String,
+    live: String,
+    store: String,
+}
+
+fn conflict_str(c: symify_core::model::Conflict) -> &'static str {
+    use symify_core::model::Conflict;
+    match c {
+        Conflict::Skip => "skip",
+        Conflict::Replace => "replace",
+        Conflict::Backup => "backup",
+    }
+}
+
+/// Render `list`; returns the exit code.
+pub fn render_list(config: &ResolvedConfig, entries: bool, json: bool) -> u8 {
+    if json {
+        let mappings = config
+            .mappings
+            .iter()
+            .map(|m| ListMappingJson {
+                name: m.name.clone(),
+                live: m.live.display().to_string(),
+                store: m.store.display().to_string(),
+                mode: mode_str(m.mode),
+                conflict: conflict_str(m.conflict),
+                entries: m
+                    .links
+                    .iter()
+                    .map(|(k, v)| {
+                        let (live, store) = entry_paths(m, k, v);
+                        ListEntryJson {
+                            key: k.clone(),
+                            live: live.display().to_string(),
+                            store: store.display().to_string(),
+                        }
+                    })
+                    .collect(),
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&ListJson { mappings }).unwrap()
+        );
+        return EXIT_OK;
+    }
+
+    if config.mappings.is_empty() {
+        println!("no mappings configured");
+        return EXIT_OK;
+    }
+    for m in &config.mappings {
+        println!(
+            "{}  {} → {}  {}  {}  ({} entries)",
+            m.name,
+            m.live.display(),
+            m.store.display(),
+            mode_str(m.mode),
+            conflict_str(m.conflict),
+            m.links.len()
+        );
+        if entries {
+            for (k, v) in &m.links {
+                let (live, store) = entry_paths(m, k, v);
+                println!("  {}  {} → {}", k, live.display(), store.display());
+            }
+        }
+    }
+    EXIT_OK
 }

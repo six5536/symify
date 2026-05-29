@@ -213,6 +213,12 @@ fn plan_entry(m: &ResolvedMapping, key: &str, value: &LinkValue, verb: Verb) -> 
     Ok(make(s, d, action))
 }
 
+/// Resolve an entry's absolute `(live, store)` paths from its key and value.
+/// Public wrapper over [`resolve_paths`] for callers like `list`.
+pub fn entry_paths(m: &ResolvedMapping, key: &str, value: &LinkValue) -> (PathBuf, PathBuf) {
+    resolve_paths(m, key, value.kind())
+}
+
 /// Resolve an entry's `(live, store)` absolute paths from its key and value kind.
 pub(crate) fn resolve_paths(m: &ResolvedMapping, key: &str, kind: LinkKind) -> (PathBuf, PathBuf) {
     let key_path = Path::new(key);

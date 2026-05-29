@@ -24,29 +24,30 @@ cargo install symify             # from source, any platform with a Rust toolcha
 
 ## Quickstart
 
-Describe what to track in `~/.config/symify/symify.toml`:
+Just add a file — symify creates the config (`~/.config/symify/symify.toml`,
+defaults `live = ~`, `store = ~/dotfiles`) on first use:
+
+```sh
+symify add ~/.zshrc      # move it into ~/dotfiles and replace it with a link
+symify add ~/.config/nvim
+symify list              # see what's tracked
+```
+
+Your dotfiles now live in `~/dotfiles`, ready to commit to git, while `~/.zshrc`
+and friends keep working as links. To track many files at once, edit the config
+directly, then `symify sync`:
 
 ```toml
-[settings]
-live = "~"
-store = "~/dotfiles"
-
 [mappings.dotfiles.links]
 ".bashrc" = true
 ".config/fish/config.fish" = true
 ```
 
-**On a machine you already use**, preview first, then bring your files into the
-store:
-
 ```sh
 symify status            # show what each entry will do
-symify sync --dry-run    # plan the move without touching anything
-symify sync              # move files into ~/dotfiles, replace them with links
+symify sync --dry-run    # plan without touching anything
+symify sync              # adopt everything listed
 ```
-
-Your dotfiles now live in `~/dotfiles`, ready to commit to git, while `~/.bashrc`
-and friends keep working as links.
 
 **On a fresh machine**, clone the store and deploy it:
 
@@ -84,15 +85,24 @@ For path resolution rules, the per-entry state machine, and the full design, see
 
 ## Commands
 
-| Command  | Direction        | What it does                          |
-| -------- | ---------------- | ------------------------------------- |
-| `sync`   | `live` → `store` | Bring your live files into the store. |
-| `deploy` | `store` → `live` | Set a machine up from the store.      |
-| `status` | read-only        | Report the state of each entry.       |
+| Command          | Direction        | What it does                                       |
+| ---------------- | ---------------- | -------------------------------------------------- |
+| `add <path>`     | `live` → `store` | Track an existing file and adopt it.               |
+| `remove <path>`  | —                | Stop tracking a file; restore a standalone copy.   |
+| `list` (`ls`)    | read-only        | List mappings and where they point.                |
+| `sync`           | `live` → `store` | Bring your live files into the store.              |
+| `deploy`         | `store` → `live` | Set a machine up from the store.                   |
+| `status`         | read-only        | Report the state of each entry.                    |
 
-`sync` and `deploy` take `--dry-run`; every command takes `--json` and `-c <file>`
-(repeatable, and it replaces the usual config locations). Run
-`symify <command> --help` for the full reference and exit codes.
+- `add`/`remove` take `-m <mapping>` (defaults to your sole mapping) and edit the
+  config in place, preserving comments. `remove --no-restore` leaves the link.
+- `sync`/`deploy`/`status`/`list` take `-m <mapping>` (repeatable) to act on
+  specific mappings; omit it for all.
+- `sync`/`deploy`/`add`/`remove` take `--dry-run`; every command takes `--json`
+  and `-c <file>` (repeatable; replaces the usual config locations). There's no
+  separate `init` — any command creates a default config if none exists.
+
+Run `symify <command> --help` for the full reference and exit codes.
 
 ## Development
 

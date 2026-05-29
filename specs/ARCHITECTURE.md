@@ -35,9 +35,17 @@ name *locations*, never roles.
 
 | Verb     | Direction        | Purpose |
 |----------|------------------|---------|
+| `add`    | `live` → `store` | Track an existing file: edit the config, then adopt it. |
+| `remove` | —                | Stop tracking a file: edit the config, restoring a standalone copy by default. |
+| `list`   | read-only        | List mappings and where they point. |
 | `sync`   | `live` → `store` | Capture/push live files into the store (includes adoption). |
 | `deploy` | `store` → `live` | Install the store onto a machine. |
 | `status` | read-only        | Report per-entry state; never mutates. |
+
+There is no `init` verb: any command auto-creates a default config (from the
+starter template, `live = ~`, `store = ~/dotfiles`) when none exists. Mappings
+are selected with `-m/--mapping` (repeatable filter on the run/query verbs;
+single value defaulting to the sole mapping on `add`/`remove`).
 
 **Modes — mechanism** (`mode = symlink | hardlink | sync`):
 
@@ -209,15 +217,43 @@ become a link, so its mode is discarded).
 ## CLI surface
 
 ```
-symify sync   [-c <file>]... [--dry-run] [--json]
-symify deploy [-c <file>]... [--dry-run] [--json]
-symify status [-c <file>]... [--json]
+symify add    <path>   [-m MAP] [--store-path P] [-c FILE]... [--force] [--dry-run] [--json]
+symify remove <path>   [-m MAP] [-c FILE]... [--no-restore] [--dry-run] [--json]   (alias: rm)
+symify list            [-m MAP]... [-c FILE]... [--entries] [--json]               (alias: ls)
+symify sync            [-m MAP]... [-c FILE]... [--dry-run] [--json]
+symify deploy          [-m MAP]... [-c FILE]... [--dry-run] [--json]
+symify status          [-m MAP]... [-c FILE]... [--json]
 ```
 
-- `-c, --config <file>` — repeatable; replaces default config discovery.
-- `--dry-run` — `sync`/`deploy` only; plan and report without mutating.
-- `--json` — machine-readable output (all verbs).
-- `--help`, `--version` — standard.
+- The only positional is `<path>` on `add`/`remove` — a real filesystem path
+  (CWD-relative / `~` / absolute) from which the config key is derived
+  (relativized against the mapping's `live`; an absolute key if outside it).
+- `-m, --mapping` — repeatable filter on the run/query verbs (omit = all);
+  a single value on `add`/`remove` defaulting to the sole mapping. Unknown name:
+  `add` creates the mapping, every other verb errors.
+- `-c, --config <file>` — the repeatable config set; replaces default discovery
+  and suppresses auto-init.
+- `--dry-run` — `sync`/`deploy`/`add`/`remove`; plan/report without mutating.
+- `--json` — machine-readable output (every verb).
+
+### Config mutation (`add` / `remove`)
+
+`add`/`remove` edit config files with `toml_edit`, preserving comments,
+ordering, and the `#:schema` line. They auto-locate across the config set:
+`remove` clears the key from **every** file that defines it; `add` writes beside
+an existing mapping (highest-precedence file if split) or creates a new mapping
+in the primary file. `add` then **adopts** the new entry (a one-entry `sync`);
+`remove` **restores** a standalone independent copy at the live path by default
+(`--no-restore` to skip). Both honour `--dry-run`.
+
+### Auto-init
+
+There is no `init` verb. In default mode (no `-c`), when the default config is
+absent, every command first creates it from the starter template (`live = ~`,
+`store = ~/dotfiles`, a `dotfiles` mapping; with a `#:schema` line for editor
+validation), printing `Created <path> (defaults).`, then proceeds. An
+explicitly-named `-c <file>` that is missing stays an error — auto-init never
+fabricates a file the user named.
 
 **Execution semantics:** entries are independent — the executor **continues on
 error**, attempts every entry, and reports a per-entry outcome. There is **no
@@ -254,7 +290,8 @@ without touching the planner.
 
 | Module   | Responsibility |
 |----------|----------------|
-| `config` | Source discovery, merge order, TOML parse, `~`/env expansion, apply `[settings]` defaults into each mapping. |
+| `config` | Source discovery, merge order, TOML parse, `~`/env expansion, apply `[settings]` defaults into each mapping; auto-init; mapping selection. |
+| `edit`   | Format-preserving config edits (`toml_edit`) for `add`/`remove`. |
 | `model`  | Config types **generated** from the JSON Schema (see [Schema codegen](#config-schema-codegen)); plus `Mode { Symlink, Hardlink, Sync }` and `Conflict { Skip, Replace, Backup }`. |
 | `plan`   | Pure planner. Resolves the merged config + FS state into an ordered `Vec<Action>` per verb. No mutation. |
 | `fs`     | Executor + the platform abstraction for link/copy/move/backup. Apply `Action`s. |
@@ -394,9 +431,9 @@ under `cargo-nextest` (`npm test`).
   is "point them at a temp tree" — no FS-abstraction trait.
 - **Injected clock.** A `now` provider keeps `Date::now`-style calls out of the
   pure layers and lets tests pin `.<timestamp>.bak` names for exact assertions.
-- **Snapshots via `insta`** for human output; hand-written assertions for
-  `--json` (snapshotting JSON is brittle). A small fixture-builder helper (DSL to
-  lay down live/store trees) keeps state-machine cases readable.
+- **Explicit assertions** on human output (key lines / summary) and parsed-JSON
+  assertions for `--json`. A small fixture-builder helper (DSL to lay down
+  live/store trees) keeps state-machine cases readable.
 - **Idempotency invariant.** A dedicated test runs each verb twice and asserts
   the second run is all-`AlreadyOk` with exit `0` — catches a class of planner
   bugs.
@@ -414,9 +451,10 @@ behavior (symlink privilege, path handling) is gated until Windows is shipped.
 Named as recommendations only — per project rules, adding a dependency requires
 explicit approval and using the latest version at implementation time.
 
-- Rust: `clap` (derive), `serde`, `toml`, `thiserror`, `directories`
-  (Windows-aware home/dirs), `blake3` (`sync`-mode content equality).
-- Rust (dev): `tempfile`, `insta`, `assert_cmd` (or `trycmd`) for CLI tests.
+- Rust: `clap` (derive), `serde`, `serde_json`, `toml`, `toml_edit`
+  (format-preserving config edits), `thiserror`, `directories` (Windows-aware
+  home/dirs), `blake3` (`sync`-mode content equality).
+- Rust (dev): `tempfile`, `assert_cmd` for CLI tests.
 - Tooling: `cargo-typify` (schema → Rust codegen), `cargo-zigbuild`,
   `cargo-nextest`.
 
