@@ -4,50 +4,50 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
-/// symify — keep a working location in sync with a managed backing repository.
+/// Keep your files in sync with a backing repository — as symlinks, hardlinks, or copies.
 #[derive(Debug, Parser)]
 #[command(name = "symify", version, about, long_about = None)]
 pub struct Cli {
-    /// The verb to run.
+    /// The command to run.
     #[command(subcommand)]
     pub command: Command,
 }
 
-/// Top-level verbs.
+/// Top-level commands.
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Capture live files into the store (live → store), adopting as needed.
+    /// Move your live files into the store and replace them with links.
     Sync(RunArgs),
-    /// Install the store into the live location (store → live).
+    /// Set up your live location from the store, linking back to it.
     Deploy(RunArgs),
-    /// Report per-entry status (read-only).
+    /// Show what each file will do, without changing anything.
     Status(StatusArgs),
 }
 
-/// Shared arguments for the mutating verbs.
+/// Shared arguments for the commands that change files.
 #[derive(Debug, Args)]
 pub struct RunArgs {
-    /// Config file(s); repeatable. When given, replaces default discovery.
+    /// Read config from these files instead of the usual locations. Repeatable.
     #[arg(short = 'c', long = "config", value_name = "FILE")]
     pub config: Vec<PathBuf>,
 
-    /// Plan and report without making any changes.
+    /// Preview the changes without touching any files.
     #[arg(long)]
     pub dry_run: bool,
 
-    /// Emit machine-readable JSON instead of human output.
+    /// Print JSON for scripts instead of human-friendly output.
     #[arg(long)]
     pub json: bool,
 }
 
-/// Arguments for the read-only `status` verb.
+/// Arguments for the read-only `status` command.
 #[derive(Debug, Args)]
 pub struct StatusArgs {
-    /// Config file(s); repeatable. When given, replaces default discovery.
+    /// Read config from these files instead of the usual locations. Repeatable.
     #[arg(short = 'c', long = "config", value_name = "FILE")]
     pub config: Vec<PathBuf>,
 
-    /// Emit machine-readable JSON instead of human output.
+    /// Print JSON for scripts instead of human-friendly output.
     #[arg(long)]
     pub json: bool,
 }
