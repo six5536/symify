@@ -1,17 +1,19 @@
 # symify
 
-A small CLI that keeps your files in sync with a managed backing repository —
-as symlinks, hardlinks, or copies. A dotfiles-style file manager.
+symify keeps your files in sync with a backing repository, as symlinks,
+hardlinks, or copies. It's a dotfiles manager: the files you use day to day stay
+where programs expect them, while the real copies live in a repository you can
+keep under version control.
 
-You keep two locations:
+There are two locations:
 
-- **`live`** — where files are actually used (e.g. `~`).
-- **`store`** — a repository that holds the real content (e.g. `~/dotfiles`),
-  usually under version control.
+- **`live`** — where your files are used (usually `~`).
+- **`store`** — the repository that holds the real content (say `~/dotfiles`),
+  typically tracked in git.
 
-`symify sync` **adopts** your existing live files into the store and replaces
-them with links; `symify deploy` installs the store back out onto a fresh
-machine. Edits then flow through the links automatically.
+`symify sync` moves your existing live files into the store and leaves links in
+their place. On a new machine, `symify deploy` recreates those links from the
+store. From then on, editing a file edits the real one through its link.
 
 ## Install
 
@@ -22,7 +24,7 @@ cargo install symify             # from source, any platform with a Rust toolcha
 
 ## Quickstart
 
-**1. Describe what to track** in `~/.config/symify/symify.toml`:
+Describe what to track in `~/.config/symify/symify.toml`:
 
 ```toml
 [settings]
@@ -34,18 +36,19 @@ store = "~/dotfiles"
 ".config/fish/config.fish" = true
 ```
 
-**Capture an existing machine** — preview, then adopt your files into the store:
+**On a machine you already use**, preview first, then bring your files into the
+store:
 
 ```sh
 symify status            # show what each entry will do
-symify sync --dry-run    # plan the adoption without touching anything
+symify sync --dry-run    # plan the move without touching anything
 symify sync              # move files into ~/dotfiles, replace them with links
 ```
 
-Your dotfiles now live in `~/dotfiles` (commit them to git) while `~/.bashrc`
+Your dotfiles now live in `~/dotfiles`, ready to commit to git, while `~/.bashrc`
 and friends keep working as links.
 
-**Set up a fresh machine** — clone the store, then deploy it:
+**On a fresh machine**, clone the store and deploy it:
 
 ```sh
 git clone <your-dotfiles-repo> ~/dotfiles
@@ -54,7 +57,7 @@ symify deploy            # create links in ~ pointing at the store
 
 ## Configuration
 
-`[settings]` are defaults; each `[mappings.<name>]` may override `live`,
+`[settings]` sets the defaults; each `[mappings.<name>]` can override `live`,
 `store`, `mode`, or `conflict`.
 
 ```toml
@@ -71,29 +74,29 @@ conflict = "backup"   # skip | replace | backup (.<timestamp>.bak)
 "old.conf" = false                           # disabled
 ```
 
-Config is loaded from `~/.config/symify/symify.toml` and
-`~/.config/symify/conf.d/*.toml` (later files win per key). The JSON Schema at
+symify reads `~/.config/symify/symify.toml` and any `~/.config/symify/conf.d/*.toml`
+files, with later files winning key by key. The JSON Schema at
 [`schema/symify.schema.json`](schema/symify.schema.json) gives editors TOML
 autocomplete and validation.
 
-See [specs/ARCHITECTURE.md](specs/ARCHITECTURE.md) for path resolution rules,
-the per-entry state machine, and the full design.
+For path resolution rules, the per-entry state machine, and the full design, see
+[specs/ARCHITECTURE.md](specs/ARCHITECTURE.md).
 
 ## Commands
 
-| Command  | Direction        | Does                                     |
-| -------- | ---------------- | ---------------------------------------- |
-| `sync`   | `live` → `store` | Capture/adopt live files into the store. |
-| `deploy` | `store` → `live` | Install the store onto a machine.        |
-| `status` | read-only        | Report per-entry state.                  |
+| Command  | Direction        | What it does                          |
+| -------- | ---------------- | ------------------------------------- |
+| `sync`   | `live` → `store` | Bring your live files into the store. |
+| `deploy` | `store` → `live` | Set a machine up from the store.      |
+| `status` | read-only        | Report the state of each entry.       |
 
-`sync`/`deploy` accept `--dry-run`; all commands accept `--json` and `-c <file>`
-(repeatable; replaces default config discovery). Run `symify <command> --help`
-for the full reference and exit codes.
+`sync` and `deploy` take `--dry-run`; every command takes `--json` and `-c <file>`
+(repeatable, and it replaces the usual config locations). Run
+`symify <command> --help` for the full reference and exit codes.
 
 ## Development
 
-Toolchains are pinned in `.mise.toml` / `rust-toolchain.toml` (managed with
+Toolchains are pinned in `.mise.toml` and `rust-toolchain.toml` (managed with
 [mise](https://mise.jdx.dev/)).
 
 ```sh
