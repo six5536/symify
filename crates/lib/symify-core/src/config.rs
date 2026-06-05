@@ -13,7 +13,7 @@ use crate::model::{Config, Conflict, LinkValue, Mapping, Mode, Settings};
 use crate::model::{DEFAULT_CONFLICT, DEFAULT_MIRROR, DEFAULT_MODE};
 
 /// A fully resolved configuration: every mapping has concrete absolute roots and
-/// effective `mode`/`conflict`, ready for planning.
+/// effective `mode`/`conflict`/`mirror`, ready for planning.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedConfig {
     /// Mappings, sorted by name for deterministic output.
@@ -413,6 +413,38 @@ mod tests {
     fn merge_all(docs: &[&str]) -> Config {
         docs.iter()
             .fold(Config::default(), |acc, d| merge(acc, cfg(d)))
+    }
+
+    #[test]
+    fn hardlink_mode_is_rejected() {
+        // hardlink mode was removed; a config using it must fail to load.
+        let err = toml::from_str::<Config>("[settings]\nmode = \"hardlink\"\n").unwrap_err();
+        assert!(
+            err.to_string().contains("hardlink") || err.to_string().contains("unknown variant"),
+            "expected a clear rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn mirror_resolves_with_precedence_and_default() {
+        // default off
+        let r = resolve(cfg(
+            "[mappings.a]\nlive=\"/l\"\nstore=\"/s\"\n[mappings.a.links]\nx=true",
+        ))
+        .unwrap();
+        assert!(!r.mappings[0].mirror);
+        // settings on, mapping inherits
+        let r = resolve(cfg(
+            "[settings]\nlive=\"/l\"\nstore=\"/s\"\nmirror=true\n[mappings.a.links]\nx=true",
+        ))
+        .unwrap();
+        assert!(r.mappings[0].mirror);
+        // mapping overrides settings
+        let r = resolve(cfg(
+            "[settings]\nlive=\"/l\"\nstore=\"/s\"\nmirror=true\n[mappings.a]\nmirror=false\n[mappings.a.links]\nx=true",
+        ))
+        .unwrap();
+        assert!(!r.mappings[0].mirror);
     }
 
     #[test]

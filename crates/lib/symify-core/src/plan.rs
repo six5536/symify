@@ -1036,6 +1036,25 @@ mod tests {
     }
 
     #[test]
+    fn deploy_mirror_prunes_live_not_store() {
+        // Direction guard: deploy copies store→live, so mirror must prune the
+        // LIVE side (a src/dst swap would wrongly prune the store).
+        let fx = Fx::new();
+        synced_dir(&fx);
+        fx.write(&fx.lp("dir/extra"), b"live-only");
+        assert_eq!(
+            act(
+                &with_mirror(fx.cfg(Mode::Sync, Conflict::Replace, vec![("dir", t())])),
+                Verb::Deploy,
+            ),
+            Action::Apply {
+                kind: ActionKind::Pull,
+                ops: vec![FsOp::Remove(fx.lp("dir/extra"))],
+            }
+        );
+    }
+
+    #[test]
     fn sync_ignores_own_bak_artifacts() {
         // Decision #2: a `.bak` on the store side is never pruned, even with mirror.
         let fx = Fx::new();
