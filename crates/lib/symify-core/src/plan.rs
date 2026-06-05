@@ -207,21 +207,15 @@ fn execute_one(p: &Planned, clock: &dyn Clock, dry_run: bool) -> Outcome {
         Action::Skip(reason) => Outcome::Skipped(reason),
         Action::Conflict => Outcome::Conflict,
         Action::Failed(msg) => Outcome::Failed(msg.clone()),
-        Action::Apply { kind, ops } => run_ops(ops, *kind, Outcome::Applied(*kind), clock, dry_run),
+        Action::Apply { kind, ops } => run_ops(ops, Outcome::Applied(*kind), clock, dry_run),
         Action::ApplyDrift { kind, ops } => {
-            run_ops(ops, *kind, Outcome::AppliedDrift(*kind), clock, dry_run)
+            run_ops(ops, Outcome::AppliedDrift(*kind), clock, dry_run)
         }
     }
 }
 
 /// Run an action's ops (unless `dry_run`), returning `applied` on success.
-fn run_ops(
-    ops: &[FsOp],
-    _kind: ActionKind,
-    applied: Outcome,
-    clock: &dyn Clock,
-    dry_run: bool,
-) -> Outcome {
+fn run_ops(ops: &[FsOp], applied: Outcome, clock: &dyn Clock, dry_run: bool) -> Outcome {
     if dry_run {
         return applied;
     }

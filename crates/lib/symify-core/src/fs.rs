@@ -337,24 +337,30 @@ fn temp_path(to: &Path) -> PathBuf {
     to.with_file_name(format!(".{name}.symify-tmp.{pid}.{n}"))
 }
 
-/// Copy a regular file atomically and preserving its mtime: write a temp beside
-/// the destination, copy permission bits, set the modification time to match the
-/// source, then `rename` over the destination. Readers and crashes never observe
-/// a half-written file; the preserved mtime keeps the size+mtime quick-check
-/// stable across runs. A leftover temp is best-effort removed on error.
+/// Copy a regular file atomically and preserving its mtime: stream the content
+/// into a fresh (writable) temp beside the destination, set the modification time
+/// to match the source while the handle is still open, then copy the source's
+/// permission bits **last** (so a read-only source can't lock us out mid-copy),
+/// and finally `rename` over the destination. Readers and crashes never observe a
+/// half-written file; the preserved mtime keeps the size+mtime quick-check stable
+/// across runs. A leftover temp is best-effort removed on error.
 fn copy_file_atomic(from: &Path, to: &Path) -> Result<()> {
     let tmp = temp_path(to);
     let result = (|| {
-        std::fs::copy(from, &tmp).map_err(|e| Error::io(&tmp, e))?;
         let src = std::fs::metadata(from).map_err(|e| Error::io(from, e))?;
-        std::fs::set_permissions(&tmp, src.permissions()).map_err(|e| Error::io(&tmp, e))?;
         let mtime = src.modified().map_err(|e| Error::io(from, e))?;
-        let f = std::fs::OpenOptions::new()
-            .write(true)
-            .open(&tmp)
+
+        let mut reader = std::fs::File::open(from).map_err(|e| Error::io(from, e))?;
+        let writer = std::fs::File::create(&tmp).map_err(|e| Error::io(&tmp, e))?;
+        std::io::copy(&mut reader, &mut &writer).map_err(|e| Error::io(&tmp, e))?;
+        writer
+            .set_times(std::fs::FileTimes::new().set_modified(mtime))
             .map_err(|e| Error::io(&tmp, e))?;
-        f.set_times(std::fs::FileTimes::new().set_modified(mtime))
-            .map_err(|e| Error::io(&tmp, e))?;
+        drop(writer);
+
+        // Permission bits last: if the source is read-only, applying its mode
+        // earlier would block writing the content / timestamps above.
+        std::fs::set_permissions(&tmp, src.permissions()).map_err(|e| Error::io(&tmp, e))?;
         std::fs::rename(&tmp, to).map_err(|e| Error::io(to, e))
     })();
     if result.is_err() {
@@ -598,6 +604,33 @@ mod tests {
         std::fs::write(a.join(".f.symify-tmp.1.2"), b"partial").unwrap();
         assert!(quick_equal(&a, &b, 0).unwrap());
         assert!(content_equal(&a, &b).unwrap());
+    }
+
+    #[test]
+    fn atomic_copy_handles_read_only_source() {
+        use crate::clock::SystemClock;
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        let from = base.join("ro");
+        let to = base.join("to");
+        std::fs::write(&from, b"locked").unwrap();
+        std::fs::set_permissions(&from, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+        apply_op(
+            &FsOp::Copy {
+                from: from.clone(),
+                to: to.clone(),
+            },
+            &SystemClock,
+        )
+        .unwrap();
+
+        assert_eq!(std::fs::read(&to).unwrap(), b"locked");
+        assert_eq!(
+            std::fs::metadata(&to).unwrap().permissions().mode() & 0o777,
+            0o444
+        );
     }
 
     #[test]

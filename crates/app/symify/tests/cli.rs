@@ -353,6 +353,28 @@ fn destructive_replace_is_gated_then_proceeds_with_yes() {
     assert!(!fx.sp("d/other").exists());
 }
 
+#[test]
+fn mirror_prune_of_nonempty_dir_is_gated() {
+    // sync mode + --delete where the store holds an extraneous non-empty dir =>
+    // the prune recursively deletes it (unrecoverable) and must be confirmed.
+    let fx = Fx::sync("replace", &["\"conf\" = true"]);
+    fx.write(&fx.lp("conf/keep"), b"k");
+    fx.cmd("sync").assert().success(); // capture
+    fx.write(&fx.sp("conf/extra/nested"), b"x"); // store-only non-empty dir
+
+    // Non-interactive + no --yes => refused, the dir survives.
+    fx.cmd("sync").arg("--delete").assert().code(2);
+    assert!(fx.sp("conf/extra/nested").exists());
+
+    // --yes pre-approves the recursive prune.
+    fx.cmd("sync")
+        .arg("--delete")
+        .arg("--yes")
+        .assert()
+        .success();
+    assert!(!fx.sp("conf/extra").exists());
+}
+
 // ----- mapping scoping --------------------------------------------------
 
 #[test]
