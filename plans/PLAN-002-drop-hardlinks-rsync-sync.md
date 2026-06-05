@@ -1,8 +1,7 @@
 # Implementation Plan: Drop hardlinks + rsync-like sync mode
 
-> Working plan for an in-progress change. Delete this file once the work has
-> landed and ARCHITECTURE.md / README reflect it. Written for a fresh session —
-> it assumes no prior context.
+> Working plan for this change, kept as a record once landed. Written for a fresh
+> session — it assumes no prior context. (Plans are retained, not deleted.)
 
 ## Goal
 
@@ -38,6 +37,78 @@ changes allowed):
     prunes `store`, `deploy` prunes `live`.
   - Whole-directory prunes must still go through the existing unrecoverable-
     delete confirmation gate (`crates/app/symify/src/confirm.rs`).
+
+## Resolved design decisions (grilled — do not re-litigate)
+
+These eight resolutions close gaps the high-level plan left open. They refine
+B1/B3/B4/B6 below; where they conflict with looser wording later in this file,
+these win.
+
+1. **Partial application + a drift state.** A `sync`-mode *directory* entry under
+   `conflict = skip` copies brand-new files (dest absent → pure add) but leaves
+   same-path differing files untouched. The leftover difference is reported via a
+   new "applied, but drift remains" state, so the idempotency invariant stays
+   honest (a second run reports the residual `Differs`, not a false all-clean).
+   This is `rsync --ignore-existing` semantics plus the drift reporting rsync
+   lacks. The `Action`/`Outcome` model gains an applied-with-drift variant, and
+   exit-code logic (`is_drift` / `output.rs`) counts it as drift (exit 1).
+
+2. **symify ignores its own artifacts in the walk.** The directory diff treats
+   `*.bak` and `*.symify-tmp.*` as invisible on **both** sides — never pruned as
+   extraneous, never picked up as a source add. This prevents `.bak.bak…` chains
+   (mirror + `backup`) and stops a deploy-side backup from being copied into the
+   store on the next sync. Cost: a file the user genuinely named `*.bak` can't be
+   tracked (acceptable — unreleased).
+
+3. **Symlinks inside a synced tree are compared as symlinks (lstat).** A symlink
+   node is equal iff both sides are symlinks with the same target string; never
+   follow it. `digest()` (the `--checksum` path) is changed to match — use
+   `symlink_metadata`, hash the link target string for link nodes. This makes
+   compare consistent with `copy_tree` (which already preserves links), matches
+   rsync's default, and turns today's "dangling link → entry fails" into graceful
+   handling.
+
+4. **Run-flag plumbing.** `mirror` lives on `ResolvedMapping` (merged mapping >
+   settings > default `false`) and is the planner's single source of truth.
+   `--delete` is applied as a **pre-plan config override** at the CLI boundary
+   (`main.rs run_verb`: set `mirror = true` on the selected mappings before
+   calling `plan`) — equivalent to setting it in config, so the planner stays
+   CLI-ignorant. Per-run flags travel in a struct: `RunOptions { checksum: bool,
+   modify_window: u64 /* seconds */ }`, threaded into `plan(config, verb, opts)`
+   and `status(config, opts)`. `checksum` only flows into the copy-mode helpers
+   (link-mode relink keeps exact `content_equal`). `status` also gains
+   `--checksum` and `--modify-window` so its report matches what a run decides.
+
+5. **Atomic copy is hand-rolled (no new dependency).** In `copy_tree`'s file
+   branch: write to `.<name>.symify-tmp.<pid>.<AtomicU64>` in the destination's
+   own directory → `set_permissions` (source mode) → `set_times`
+   (mtime = source, via `std::fs::FileTimes`) → `rename` over the destination
+   (same-fs ⇒ atomic). Best-effort `remove_file` of the temp on any error after
+   creation. `tempfile` stays a dev-dependency only.
+
+6. **mtime: exact by default, plus `--modify-window`.** `quick_equal` treats two
+   mtimes as equal when they differ by ≤ the window; default `0` = exact (correct
+   on normal local filesystems). `--modify-window 1` covers FAT/coarse/network
+   stores (rsync-compatible). The window is ignored under `--checksum`. Note for
+   the git-backed store case: a `git clone`/`pull` resets mtime, but this is
+   self-healing — the first `deploy` into a missing `live` re-establishes a
+   matching baseline; a content-changing pull correctly re-syncs; a mtime-only
+   touch causes one no-op copy then stabilizes. No special handling needed.
+
+7. **Prune confirmation: opt-in is the boundary.** Keep the existing gate
+   (prompt only on recursive delete of a non-empty directory). The opt-in
+   `--delete` / `mirror = true` is itself the confirmation; `sync` prunes the
+   git-backed store. Do **not** add a per-file/bulk-delete prompt. Do add prune
+   **visibility**: `--dry-run` and normal output list each pruned path (and a
+   count) so the user can preview before committing.
+
+8. **Run output stays one line per entry.** The renderer derives copied /
+   backed-up / pruned counts from `Planned.action.ops` (core carries no counts —
+   only the applied-with-drift signal from #1). Human line example:
+   `! push  dots/nvim (+2 ~1 -3, 1 drift)`. JSON: add `copied`, `backed_up`,
+   `pruned`, and `drift` fields to `RunEntryJson`. `status` stays coarse
+   (`ok`/`differs` per entry — no per-file status). Do not expand to per-file
+   sub-lines (would break the 1:1 entry↔config-entry shape of the JSON array).
 
 ## Architectural principle to respect
 
@@ -126,17 +197,27 @@ lists).
   per-node `(is_dir, len for files, mtime, perm_bits)`, short-circuiting on the
   first diff. Directories: compare the set of entry names, recurse. This is
   O(files) stat calls, not O(bytes).
+- mtime equality honours `modify_window` (decision #6): equal when
+  `|mtime_a - mtime_b| <= window`; `window = 0` means exact.
+- Symlink nodes are compared **as symlinks** (decision #3): equal iff both are
+  symlinks with the same target string; never follow. Use `symlink_metadata`.
 - Keep `digest`-based exact compare for `--checksum` (rename `synced_equal` →
-  e.g. `checksum_equal`, or keep and add `quick_equal`).
+  e.g. `checksum_equal`, or keep and add `quick_equal`). **Change `digest` to
+  match decision #3**: `symlink_metadata` + hash the link target string for link
+  nodes, so the checksum path agrees with `quick_equal` and stops erroring on
+  dangling links.
 - `status` and the planner use `quick_equal` by default, `checksum_equal` when
-  `--checksum` is set. (Thread a `checksum: bool` into `status()` and the plan
-  path, or carry it on the resolved/Planned data — pick the smaller diff.)
+  `--checksum` is set. Per-run flags travel in `RunOptions { checksum: bool,
+  modify_window: u64 }` (decision #4), threaded into `status(config, opts)` and
+  the plan path.
 
 **B2. Preserve mtime + atomic copy (executor).**
-- In `copy_tree` (file branch): copy to a temp file in the **same directory**,
-  fsync optional, set permissions, **set mtime to match source**, then `rename`
-  over the destination. Use `std::fs::FileTimes` (`File::set_times`) for mtime;
-  it is stable in recent std (toolchain is 1.96, fine). No new dependency.
+- In `copy_tree` (file branch): copy to a temp file in the **same directory**
+  named `.<name>.symify-tmp.<pid>.<AtomicU64>` (decision #5), set permissions,
+  **set mtime to match source**, then `rename` over the destination. Use
+  `std::fs::FileTimes` (`File::set_times`) for mtime; it is stable in recent std
+  (toolchain is 1.96, fine). Best-effort `remove_file` of the temp on any error
+  after creation. No new dependency (`tempfile` stays dev-only).
 - Directory mtime preservation is not required for the quick-check (dirs are
   compared by children); keep existing dir-permission preservation.
 
@@ -146,22 +227,29 @@ lists).
   - If destination missing → copy the whole (sub)tree as today (still emit
     per-file `Copy` ops, or a single tree copy — either is fine when nothing to
     diff).
+  - The walk **skips `*.bak` and `*.symify-tmp.*`** on both sides (decision #2):
+    they are neither copied as source adds nor pruned as extraneous.
   - If both exist: walk source vs destination. For each **source** path:
-    - dest missing → `Copy(s_file, d_file)`.
+    - dest missing → `Copy(s_file, d_file)` (a pure add — emitted even under
+      `conflict = skip`, decision #1).
     - dest present and `quick_equal` (or `checksum_equal`) → nothing.
-    - dest present and differs → conflict policy: `skip` → Conflict (report);
-      `backup` → `Backup(d_file)` + `Copy`; `replace` → `Remove(d_file)` +
-      `Copy`.
+    - dest present and differs → conflict policy: `skip` → leave + mark the entry
+      as carrying drift (decision #1); `backup` → `Backup(d_file)` + `Copy`;
+      `replace` → `Remove(d_file)` + `Copy`.
   - For each **destination** path with no source counterpart, **only when
-    `mirror` is on**: dispose per conflict: `skip` → leave + report drift;
-    `backup` → `Backup(d_path)`; `replace` → `Remove(d_path)`.
-  - Aggregate into the entry's `Action::Apply { kind: Push/Pull, ops }`. If no
-    ops result → `Action::AlreadyOk`. If only unresolved `skip` differences →
-    `Action::Conflict`.
-- Single-file sync entries keep today's simple logic.
-- Decide the cleanest way to make these helpers know `mirror` + `checksum`:
-  thread them as params (they already take `conflict`). `mirror` should come
-  from the resolved mapping; `checksum` from the CLI flag for that run.
+    `mirror` is on**: dispose per conflict: `skip` → leave + mark drift;
+    `backup` → `Backup(d_path)`; `replace` → `Remove(d_path)`. Emit copy ops
+    before prune ops for readable output.
+  - Aggregate into the entry's `Action`. No ops and no drift → `AlreadyOk`.
+    Ops but no unresolved `skip` difference → `Apply { kind: Push/Pull, ops }`.
+    Unresolved `skip` differences present → the new **applied-with-drift** state
+    (decision #1): carries `kind` + `ops` (the pure adds still run) **and** a
+    drift flag, so the entry both applies and reports drift (exit 1). With no
+    applicable ops at all, it degrades to plain `Conflict`.
+- Single-file sync entries keep today's simple shape, but switch to
+  `quick_equal` + the atomic/mtime-preserving copy (consequence of #5/#6).
+- Helpers learn `mirror` + `RunOptions`: `mirror` from the resolved mapping,
+  `checksum`/`modify_window` from `RunOptions` threaded through `plan`.
 
 **B4. Mirror config plumbing.**
 - Schema: add `mirror` boolean to `Settings` + `Mapping`. Regen model.
@@ -169,40 +257,61 @@ lists).
 - `config.rs` `resolve`: add `mirror` to `ResolvedMapping` (merge like
   `mode`/`conflict`: mapping over settings over default). Update `merge_settings`
   / `merge_mapping` for the new field, and the resolve tests' fixtures.
-- `cli.rs`: add `--delete` (sets mirror on for the run) and `--checksum` to
-  `RunArgs`. `--delete` overrides config `mirror` to true for that run (config
-  can also enable it persistently). `--checksum` selects exact compare.
-- `main.rs` `run_verb`: pass the flags down to `plan`. Update `Planned` if it
-  needs to carry `mirror` for reporting.
+- `cli.rs`: add `--delete`, `--checksum`, and `--modify-window <SECONDS>`
+  (default 0) to `RunArgs`; add `--checksum` and `--modify-window` to `QueryArgs`
+  (decision #4/#6) so `status` matches what a run would decide.
+- `main.rs` `run_verb`: build `RunOptions { checksum, modify_window }` and pass
+  to `plan`/`status`. Apply `--delete` as a **pre-plan config override**: when
+  set, flip `mirror = true` on the selected mappings before calling `plan`
+  (decision #4) — the planner reads only `ResolvedMapping.mirror`.
 - `plan.rs` test fixtures (`Fx::cfg`) gain a `mirror` field — update the
   `ResolvedMapping` literal construction across plan.rs/status.rs/main.rs tests.
 
-**B5. Confirmation gate.**
+**B5. Confirmation gate + prune visibility.**
 - `confirm.rs`: a mirror prune that recursively deletes a non-empty directory is
   unrecoverable under `replace` — ensure the gate still detects `Remove(dir)`
   ops the same way it does for conflict=replace today. (Likely already covered
   since it inspects `FsOp::Remove`; verify with a test.)
+- No per-file/bulk-delete prompt (decision #7): the opt-in `--delete` / `mirror`
+  is the safety boundary. Instead, surface pruned paths in `--dry-run` and normal
+  output so the user can preview before committing.
 
 **B6. Tests (mirror the existing style — real temp trees).**
 - Planner units for the new copy diff: dest-missing-file → Copy; one-file-changed
   → only that file's ops (NOT a whole-tree recopy — this is the headline win,
   assert it); unchanged tree → AlreadyOk; mirror off → extraneous dest file left;
   mirror on + backup → `Backup` then nothing; mirror on + replace → `Remove`;
-  mirror on + skip → Conflict/drift.
+  mirror on + skip → leave + drift.
+- Decision-specific units:
+  - **#1 partial apply:** dir with a new file + a same-path diff under `skip` →
+    the new file's `Copy` runs **and** the entry reports applied-with-drift
+    (exit 1); second run still reports the residual drift.
+  - **#2 artifact exclusion:** a `*.bak` / `*.symify-tmp.*` on the dest is not
+    pruned by `mirror`; on the source it is not copied. Mirror + backup is
+    idempotent (no `.bak.bak`).
+  - **#3 symlinks:** equal link target → AlreadyOk; changed target → diff;
+    dangling link does not error; copy recreates the link verbatim.
+  - **#6 modify-window:** mtime within window → equal; outside → diff.
 - `fs.rs`: `quick_equal` detects size/mtime/mode drift and equality; atomic copy
   leaves no partial file on simulated failure (best-effort); mtime preserved.
 - CLI e2e (`crates/app/symify/tests/cli.rs`): `sync` of a large-ish dir touches
-  only changed files; `--delete` prunes; default does not; `--checksum` forces a
-  recompare when mtime was bumped but content is identical.
-- Idempotency invariant: second `sync`/`deploy` is all-AlreadyOk, exit 0.
+  only changed files; `--delete` prunes and the output **lists pruned paths**
+  (decision #7); default does not prune; `--checksum` forces a recompare when
+  mtime was bumped but content is identical; `--modify-window` tolerates a small
+  mtime skew. Assert the per-entry count/drift fields in `--json` (decision #8).
+- Idempotency invariant: second `sync`/`deploy` is all-AlreadyOk, exit 0
+  (except entries left in drift by `conflict = skip`, which persist by design).
 
 **B7. Docs.**
 - ARCHITECTURE.md: update Modes list (drop hardlink), the sync/deploy state
-  machine tables, the "Correctness tests" section (size+mtime quick-check +
-  `--checksum`; mtime now preserved and part of sync identity), add the `mirror`
-  axis + `--delete` flag to the CLI surface and config sections.
-- README: mode line, add `--delete`/`--checksum` to the flags blurb, `mirror`
-  config key example.
+  machine tables (incl. the new applied-with-drift state, decision #1), the
+  "Correctness tests" section (size+mtime quick-check + `--checksum` +
+  `--modify-window`; mtime now preserved and part of sync identity; symlinks
+  compared as symlinks, decision #3), add the `mirror` axis + `--delete` flag to
+  the CLI surface and config sections, and note that symify's own `*.bak` /
+  `*.symify-tmp.*` are invisible to the diff (decision #2).
+- README: mode line, add `--delete`/`--checksum`/`--modify-window` to the flags
+  blurb, `mirror` config key example.
 - Schema starter template in `config.rs` `render_starter` — mention `mirror`
   only if you want it discoverable (optional; keep minimal).
 
@@ -218,15 +327,15 @@ workflow that cross-builds via the existing `package.json` `build:*` scripts
 launcher + platform packages atomically, and `cargo publish`es. Out of scope for
 this change.
 
-## Known environment blocker
+## Environment notes
 
-As of writing, Bash in the session was failing with a harness permission error
-(`EACCES … mkdir '~/.claude/session-env/…'`), which blocked `npm run codegen`,
-`cargo build`, and the test suite. **Before implementing, confirm the shell
-works** (`cargo --version`, `npm run test`). If it is still broken, either fix
-the sandbox/permission or have the user run commands via `! <command>`. Do not
-land the schema→codegen regen or the planner rewrite without compiling and
-running `cargo nextest run --workspace` and `npm run codegen:check`.
+- The earlier Bash permission blocker (`EACCES … session-env`) is resolved — the
+  shell, `cargo`, and `mise` run normally. Still: do not land the schema→codegen
+  regen or the planner rewrite without `cargo nextest run --workspace` and
+  `npm run codegen:check` green.
+- `cargo-zigbuild` is now pinned in `.mise.toml` (`cargo:cargo-zigbuild
+  = 0.22.3`) and installed, so Phase C's cross-builds via `package.json`
+  `build:*` can run under mise.
 
 ## Definition of done
 
@@ -235,11 +344,22 @@ running `cargo nextest run --workspace` and `npm run codegen:check`.
   remain.
 - `sync`/`deploy` copy only changed files (verified by a test asserting a
   one-file change does not recopy the tree), use a size+mtime quick-check, copy
-  atomically, and preserve mtime; `--checksum` forces exact compare.
+  atomically, and preserve mtime; `--checksum` forces exact compare and
+  `--modify-window` tolerates coarse-fs mtime skew (decision #6).
+- Under `conflict = skip`, a partially-changed directory still copies its
+  brand-new files and reports the residual difference as applied-with-drift
+  (exit 1), and a second run reports the same drift (decision #1).
+- symify's own `*.bak` / `*.symify-tmp.*` are invisible to the diff — mirror +
+  backup is idempotent, no `.bak.bak` chains (decision #2).
+- Symlinks inside a synced tree are compared as symlinks and copied verbatim; a
+  dangling link does not fail the entry (decision #3).
 - `mirror` config key + `--delete` flag work, default off, dispose via
-  `conflict`, gated for unrecoverable dir prunes.
+  `conflict`, gated for unrecoverable dir prunes, and pruned paths are listed in
+  output / `--dry-run` (decision #7).
+- `--json` run output carries per-entry `copied`/`backed_up`/`pruned`/`drift`
+  fields, one entry per config entry (decision #8).
 - `cargo fmt --check`, `cargo clippy -D warnings`, `cargo nextest run
   --workspace`, and `npm run codegen:check` all pass.
-- ARCHITECTURE.md and README updated; this PLAN.md deleted.
+- ARCHITECTURE.md and README updated. (This plan is retained as a record.)
 </content>
 </invoke>
