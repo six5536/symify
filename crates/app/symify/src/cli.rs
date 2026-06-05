@@ -6,11 +6,19 @@ use clap::{Args, Parser, Subcommand};
 
 /// Keep your files in sync with a backing repository — as symlinks, hardlinks, or copies.
 #[derive(Debug, Parser)]
-#[command(name = "symify", version, about, long_about = None)]
+#[command(name = "symify", about, long_about = None, disable_version_flag = true)]
 pub struct Cli {
     /// The command to run.
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
+
+    /// Allow mutating commands to run as root (refused by default).
+    #[arg(long, global = true)]
+    pub allow_root: bool,
+
+    /// Print the version (just the number, for scripts) and exit.
+    #[arg(short = 'V', long = "version", global = true)]
+    pub version: bool,
 }
 
 /// Top-level commands.
@@ -46,6 +54,10 @@ pub struct RunArgs {
     /// Plan and report without making any changes.
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Skip the confirmation prompt for unrecoverable recursive deletes.
+    #[arg(short = 'y', long = "yes")]
+    pub yes: bool,
 
     /// Emit machine-readable JSON instead of human output.
     #[arg(long)]
@@ -115,9 +127,53 @@ pub struct AddArgs {
     #[arg(long)]
     pub dry_run: bool,
 
+    /// Skip the confirmation prompt for unrecoverable recursive deletes.
+    #[arg(short = 'y', long = "yes")]
+    pub yes: bool,
+
     /// Emit machine-readable JSON instead of human output.
     #[arg(long)]
     pub json: bool,
+}
+
+/// Subcommand names and aliases that the bare-path shortcut must not shadow.
+const SUBCOMMANDS: &[&str] = &[
+    "sync", "deploy", "status", "add", "remove", "rm", "list", "ls", "help",
+];
+
+/// Make `symify <PATH> …` an alias for `symify add <PATH> …`, since adding is the
+/// common case. Bare `symify` (or only global flags like `-V`/`--help`) is left
+/// untouched, so clap still prints help/version.
+///
+/// We insert `add` before the first non-flag token, unless it is already a known
+/// subcommand. A file literally named like a subcommand (e.g. `status`) is still
+/// read as that subcommand — use `symify add status` to disambiguate. A bare `--`
+/// disables the shortcut, so `symify -- <PATH>` is left as-is.
+pub fn normalize_args<I, T>(args: I) -> Vec<String>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<String>,
+{
+    let mut args: Vec<String> = args.into_iter().map(Into::into).collect();
+    // The command slot is the first token that isn't a leading global flag. Every
+    // top-level flag (`--allow-root`, `-V`/`--version`) takes no value, so the
+    // first non-`-` token (before any `--`) is where a subcommand would go.
+    let mut slot = None;
+    for (i, a) in args.iter().enumerate().skip(1) {
+        if a == "--" {
+            break;
+        }
+        if !a.starts_with('-') {
+            slot = Some(i);
+            break;
+        }
+    }
+    if let Some(i) = slot
+        && !SUBCOMMANDS.contains(&args[i].as_str())
+    {
+        args.insert(i, "add".to_string());
+    }
+    args
 }
 
 /// Arguments for `remove`.
@@ -146,4 +202,53 @@ pub struct RemoveArgs {
     /// Emit machine-readable JSON instead of human output.
     #[arg(long)]
     pub json: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn norm(args: &[&str]) -> Vec<String> {
+        normalize_args(std::iter::once("symify").chain(args.iter().copied()))
+    }
+
+    #[test]
+    fn bare_path_becomes_add() {
+        assert_eq!(norm(&["~/.bashrc"]), ["symify", "add", "~/.bashrc"]);
+    }
+
+    #[test]
+    fn path_keeps_trailing_flags() {
+        assert_eq!(
+            norm(&["~/.bashrc", "-m", "dots", "--dry-run"]),
+            ["symify", "add", "~/.bashrc", "-m", "dots", "--dry-run"]
+        );
+    }
+
+    #[test]
+    fn global_flag_before_path_still_adds() {
+        assert_eq!(
+            norm(&["--allow-root", "~/.bashrc"]),
+            ["symify", "--allow-root", "add", "~/.bashrc"]
+        );
+    }
+
+    #[test]
+    fn known_subcommands_and_aliases_untouched() {
+        for cmd in ["sync", "deploy", "status", "add", "remove", "rm", "list", "ls"] {
+            assert_eq!(norm(&[cmd]), ["symify", cmd]);
+        }
+    }
+
+    #[test]
+    fn bare_and_flag_only_invocations_untouched() {
+        assert_eq!(norm(&[]), ["symify"]);
+        assert_eq!(norm(&["-V"]), ["symify", "-V"]);
+        assert_eq!(norm(&["--help"]), ["symify", "--help"]);
+    }
+
+    #[test]
+    fn double_dash_disables_shortcut() {
+        assert_eq!(norm(&["--", "weird"]), ["symify", "--", "weird"]);
+    }
 }

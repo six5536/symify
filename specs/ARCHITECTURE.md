@@ -123,6 +123,49 @@ independent content, so `sync` is a no-op for it (edits flow through to `D`).
 `sync`-mode (copy) entries have real bytes on both sides, so `sync` and `deploy`
 remain meaningful in both directions.
 
+## Safety
+
+symify moves, links, and (under `replace`) deletes files, so it constrains what
+it will act on. The foundational property is that it **never discovers files**:
+the planner only ever touches the exact keys written in config — there is no
+glob, directory walk, or "track everything under `live`." Beyond that:
+
+**Planner guards** — refused as a per-entry `Failed` (so `status`, `sync`,
+`deploy`, and `add` all agree; `add` aborts before editing config). Shared by
+`plan` and `status` via `plan::guard_reason`:
+
+- **Protected roots (sentinels).** Refuse an entry whose resolved `live` or
+  `store` equals `/`, `$HOME`, or the mapping's own `live`/`store` root. Kills
+  `symify add ~` and similar whole-home captures.
+- **Store containment.** Refuse an entry whose `live` equals or is an ancestor of
+  the `store` root — adopting it would pull the store into itself. (This is the
+  one ancestor check kept, because containing the store is never safe; it has no
+  false positives for ordinary entries.)
+- **Out-of-root ⇒ file-only.** Anything resolving *outside* the live root must be
+  a single file, not a directory, on either side. A leaf like `/etc/hosts` is
+  fine; `/etc` (a tree) is refused. This preserves the absolute-key feature while
+  preventing system-tree captures, even under `sudo`.
+
+**Config validation** — at resolve time, a mapping whose `live` and `store`
+resolve to the same directory is rejected outright (every entry would be both
+source and destination). Note the default layout deliberately *nests* `store`
+under `live` (`~` / `~/dotfiles`); that is fine — only equality is refused.
+
+**Refuse to run as root.** The mutating verbs (`sync`/`deploy`/`add`/`remove`)
+refuse when `euid == 0` unless `--allow-root` is passed; `status`/`list` are
+always allowed. (`geteuid` is declared directly — no `libc` dependency. Windows
+is a no-op pending a future milestone.)
+
+**Confirmation for unrecoverable deletes.** The only unrecoverable op symify
+emits is a recursive delete of a non-empty directory, produced by
+`conflict = replace`. Before executing such a plan it requires confirmation: an
+interactive `[y/N]` prompt (default No) on a TTY, or `--yes`. Non-interactive
+runs (piped, `--json`, CI) are *refused* unless `--yes` is given, so a script can
+never silently trigger one. `--dry-run` never prompts and shows the deletes in
+its preview. A `relink` (removing content byte-identical to the other side) is
+recoverable and therefore never gated. This lives in the binary (`confirm.rs`);
+the planner stays pure.
+
 ## Configuration
 
 ### Roots and structure
@@ -217,12 +260,14 @@ become a link, so its mode is discarded).
 ## CLI surface
 
 ```
-symify add    <path>   [-m MAP] [--store-path P] [-c FILE]... [--force] [--dry-run] [--json]
+symify add    <path>   [-m MAP] [--store-path P] [-c FILE]... [--force] [--dry-run] [-y] [--json]
 symify remove <path>   [-m MAP] [-c FILE]... [--no-restore] [--dry-run] [--json]   (alias: rm)
 symify list            [-m MAP]... [-c FILE]... [--entries] [--json]               (alias: ls)
-symify sync            [-m MAP]... [-c FILE]... [--dry-run] [--json]
-symify deploy          [-m MAP]... [-c FILE]... [--dry-run] [--json]
+symify sync            [-m MAP]... [-c FILE]... [--dry-run] [-y] [--json]
+symify deploy          [-m MAP]... [-c FILE]... [--dry-run] [-y] [--json]
 symify status          [-m MAP]... [-c FILE]... [--json]
+
+Global: --allow-root  (permit mutating verbs to run as root; refused otherwise)
 ```
 
 - The only positional is `<path>` on `add`/`remove` — a real filesystem path
@@ -234,6 +279,9 @@ symify status          [-m MAP]... [-c FILE]... [--json]
 - `-c, --config <file>` — the repeatable config set; replaces default discovery
   and suppresses auto-init.
 - `--dry-run` — `sync`/`deploy`/`add`/`remove`; plan/report without mutating.
+- `-y, --yes` — pre-approve unrecoverable recursive deletes (`sync`/`deploy`/`add`);
+  see Safety. Required for such a plan when not on a TTY (piped / `--json` / CI).
+- `--allow-root` — global; permit a mutating verb to run as root (otherwise refused).
 - `--json` — machine-readable output (every verb).
 
 ### Config mutation (`add` / `remove`)

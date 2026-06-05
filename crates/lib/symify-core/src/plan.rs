@@ -206,11 +206,66 @@ fn plan_entry(m: &ResolvedMapping, key: &str, value: &LinkValue, verb: Verb) -> 
     }
 
     let (s, d) = resolve_paths(m, key, kind);
+
+    // Safety guards: refuse entries that could swallow a root or operate on a
+    // directory outside the live root. See `specs/ARCHITECTURE.md` (Safety).
+    if let Some(reason) = guard_reason(m, &s, &d)? {
+        return Ok(make(s, d, Action::Failed(reason)));
+    }
+
     let action = match verb {
         Verb::Sync => plan_sync(&s, &d, m.mode, m.conflict)?,
         Verb::Deploy => plan_deploy(&s, &d, m.mode, m.conflict)?,
     };
     Ok(make(s, d, action))
+}
+
+/// Safety check shared by [`plan`] and `status`. Returns a refusal reason when an
+/// entry's resolved `(live, store)` is dangerous, or `None` when it is safe:
+///
+/// - **A (sentinels):** live or store resolves to a protected root — `/`,
+///   `$HOME`, or the mapping's own `live`/`store` root.
+/// - **store-containment:** live equals or contains the store root (adopting it
+///   would pull the store into itself).
+/// - **B (out-of-root ⇒ file-only):** anything resolving outside the live root
+///   must be a single file, not a directory, on either side (blocks adopting or
+///   deploying whole trees such as `/etc`).
+pub(crate) fn guard_reason(m: &ResolvedMapping, s: &Path, d: &Path) -> Result<Option<String>> {
+    let ns = fs::normalize(s);
+    let nd = fs::normalize(d);
+    let nlive = fs::normalize(&m.live);
+    let nstore = fs::normalize(&m.store);
+
+    let mut sentinels = vec![nlive.clone(), nstore.clone(), PathBuf::from("/")];
+    if let Ok(home) = crate::config::home_dir() {
+        sentinels.push(fs::normalize(&home));
+    }
+    for (side, p) in [("live", &ns), ("store", &nd)] {
+        if sentinels.iter().any(|sent| sent == p) {
+            return Ok(Some(format!(
+                "refusing to operate on protected root: {side} path resolves to {}",
+                p.display()
+            )));
+        }
+    }
+
+    if nstore.starts_with(&ns) {
+        return Ok(Some(format!(
+            "refusing: live path {} contains the store root {}",
+            ns.display(),
+            nstore.display()
+        )));
+    }
+
+    if !ns.starts_with(&nlive)
+        && (fs::inspect(s)? == NodeKind::Dir || fs::inspect(d)? == NodeKind::Dir)
+    {
+        return Ok(Some(format!(
+            "refusing: {} is outside the live root, so it must be a file, not a directory",
+            s.display()
+        )));
+    }
+    Ok(None)
 }
 
 /// Resolve an entry's absolute `(live, store)` paths from its key and value.
@@ -892,6 +947,74 @@ mod tests {
             ),
             Action::Conflict
         );
+    }
+
+    // ---- safety guards ----
+
+    #[test]
+    fn guard_refuses_entry_at_live_root() {
+        let fx = Fx::new();
+        // An empty key resolves to the live root itself.
+        assert!(matches!(
+            act(
+                &fx.cfg(Mode::Symlink, Conflict::Backup, vec![("", t())]),
+                Verb::Sync
+            ),
+            Action::Failed(_)
+        ));
+    }
+
+    #[test]
+    fn guard_refuses_directory_outside_live_root() {
+        let fx = Fx::new();
+        let outside = fx._tmp.path().join("outside_dir");
+        std::fs::create_dir_all(&outside).unwrap();
+        let key = outside.to_string_lossy().into_owned();
+        assert!(matches!(
+            act(
+                &fx.cfg(Mode::Symlink, Conflict::Backup, vec![(key.as_str(), t())]),
+                Verb::Sync
+            ),
+            Action::Failed(_)
+        ));
+    }
+
+    #[test]
+    fn guard_allows_file_outside_live_root() {
+        let fx = Fx::new();
+        let outside = fx._tmp.path().join("outside.txt");
+        std::fs::write(&outside, b"x").unwrap();
+        let key = outside.to_string_lossy().into_owned();
+        // A single file outside the live root is adopted in place.
+        assert!(matches!(
+            act(
+                &fx.cfg(Mode::Symlink, Conflict::Backup, vec![(key.as_str(), t())]),
+                Verb::Sync
+            ),
+            Action::Apply {
+                kind: ActionKind::Adopt,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn guard_refuses_live_path_containing_store() {
+        // Store nested under live; an entry whose live path is an ancestor of the
+        // store root would pull the store into itself.
+        let tmp = tempfile::tempdir().unwrap();
+        let live = tmp.path().join("live");
+        let cfg = ResolvedConfig {
+            mappings: vec![ResolvedMapping {
+                name: "m".into(),
+                store: live.join("sub/store"),
+                live,
+                mode: Mode::Symlink,
+                conflict: Conflict::Backup,
+                links: vec![("sub".to_string(), t())],
+            }],
+        };
+        assert!(matches!(act(&cfg, Verb::Sync), Action::Failed(_)));
     }
 
     #[test]

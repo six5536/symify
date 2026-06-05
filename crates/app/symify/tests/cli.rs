@@ -249,6 +249,84 @@ fn rm_and_ls_aliases_work() {
     assert!(!fx.config_text().contains(".zshrc"));
 }
 
+#[test]
+fn bare_path_is_shorthand_for_add() {
+    let fx = Fx::new("backup", &[]);
+    fx.write(&fx.lp(".zshrc"), b"z");
+
+    // `symify <PATH>` with no verb == `symify add <PATH>`.
+    Command::cargo_bin("symify")
+        .unwrap()
+        .arg(fx.lp(".zshrc"))
+        .arg("-c")
+        .arg(&fx.config)
+        .assert()
+        .success();
+
+    assert_eq!(std::fs::read(fx.sp(".zshrc")).unwrap(), b"z");
+    assert!(is_symlink(&fx.lp(".zshrc")));
+    assert!(fx.config_text().contains("\".zshrc\""));
+}
+
+#[test]
+fn bare_invocation_prints_help() {
+    let out = Command::cargo_bin("symify").unwrap().assert().success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(stdout.contains("Usage:"), "got: {stdout}");
+}
+
+// ----- version ----------------------------------------------------------
+
+#[test]
+fn version_flag_prints_bare_number() {
+    for flag in ["-V", "--version"] {
+        let out = Command::cargo_bin("symify")
+            .unwrap()
+            .arg(flag)
+            .assert()
+            .success();
+        let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+        // Just the number, no "symify " prefix — friendlier for scripts.
+        assert_eq!(stdout.trim(), env!("CARGO_PKG_VERSION"), "flag {flag}");
+    }
+}
+
+// ----- safety guards ----------------------------------------------------
+
+#[test]
+fn add_refuses_directory_outside_live_root() {
+    let fx = Fx::new("backup", &[]);
+    // A directory that is a sibling of `live`, i.e. outside the mapping's root.
+    let outside = fx.live.parent().unwrap().join("outside_dir");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("f"), b"x").unwrap();
+
+    fx.cmd("add").arg(&outside).assert().code(2);
+    // The guard fires before any config edit.
+    assert!(!fx.config_text().contains("outside_dir"));
+    assert!(!is_symlink(&outside));
+}
+
+#[test]
+fn destructive_replace_is_gated_then_proceeds_with_yes() {
+    // sync + conflict=replace where live and store both hold a non-empty, differing
+    // directory => the plan recursively deletes the store dir (unrecoverable).
+    let fx = Fx::with_body("[mappings.dotfiles.links]\n\"d\" = true\n", "replace");
+    fx.write(&fx.lp("d/file"), b"live");
+    fx.write(&fx.sp("d/other"), b"store");
+
+    // Non-interactive (piped stdin) + no --yes => refused, nothing executed.
+    fx.cmd("sync").assert().code(2);
+    assert!(fx.sp("d/other").exists());
+    assert!(!is_symlink(&fx.lp("d")));
+
+    // --yes pre-approves the delete: store dir is replaced, live becomes a link.
+    fx.cmd("sync").arg("--yes").assert().success();
+    assert!(is_symlink(&fx.lp("d")));
+    assert_eq!(std::fs::read(fx.sp("d/file")).unwrap(), b"live");
+    assert!(!fx.sp("d/other").exists());
+}
+
 // ----- mapping scoping --------------------------------------------------
 
 #[test]

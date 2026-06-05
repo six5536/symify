@@ -1,16 +1,19 @@
 //! symify CLI entry point.
 
 mod cli;
+mod confirm;
 mod output;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use symify_core::clock::SystemClock;
 use symify_core::config::{ResolvedConfig, ResolvedMapping};
 use symify_core::model::{LinkValue, Mode};
-use symify_core::{Error, FsOp, Verb, config, edit, entry_paths, execute, fs, plan, status};
+use symify_core::{
+    Action, Error, FsOp, Verb, config, edit, entry_paths, execute, fs, plan, status,
+};
 
 use crate::cli::{AddArgs, Cli, Command, ListArgs, QueryArgs, RemoveArgs, RunArgs};
 
@@ -25,7 +28,22 @@ fn main() -> ExitCode {
 }
 
 fn run() -> symify_core::Result<u8> {
-    match Cli::parse().command {
+    let cli = Cli::parse_from(cli::normalize_args(std::env::args()));
+    if cli.version {
+        // Bare version number — easier to consume from scripts than `name x.y.z`.
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(output::EXIT_OK);
+    }
+    let Some(command) = cli.command else {
+        Cli::command().print_help().ok();
+        return Ok(output::EXIT_OK);
+    };
+    if is_mutating(&command) && is_root() && !cli.allow_root {
+        return Err(Error::config(
+            "refusing to run as root; re-run with --allow-root if you really mean it",
+        ));
+    }
+    match command {
         Command::Sync(args) => run_verb(Verb::Sync, args),
         Command::Deploy(args) => run_verb(Verb::Deploy, args),
         Command::Status(args) => run_status(args),
@@ -33,6 +51,32 @@ fn run() -> symify_core::Result<u8> {
         Command::Remove(args) => run_remove(args),
         Command::List(args) => run_list(args),
     }
+}
+
+/// Whether a command mutates the filesystem or config (so it should be refused
+/// under root unless `--allow-root`). `status`/`list` are read-only.
+fn is_mutating(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Sync(_) | Command::Deploy(_) | Command::Add(_) | Command::Remove(_)
+    )
+}
+
+/// True when the process is running with an effective uid of 0 (root). We declare
+/// `geteuid` directly rather than depend on `libc`; it is always linked on Unix.
+#[cfg(unix)]
+fn is_root() -> bool {
+    unsafe extern "C" {
+        fn geteuid() -> u32;
+    }
+    unsafe { geteuid() == 0 }
+}
+
+/// Off Unix there is no euid concept here; never refuse. (Windows admin detection
+/// is a future-milestone concern.)
+#[cfg(not(unix))]
+fn is_root() -> bool {
+    false
 }
 
 /// Discover (auto-initing a default config if needed), then load + resolve.
@@ -51,6 +95,10 @@ fn run_verb(verb: Verb, args: RunArgs) -> symify_core::Result<u8> {
     let (_, resolved) = load_set(&args.config)?;
     let cfg = config::select(resolved, &args.mapping)?;
     let planned = plan(&cfg, verb)?;
+    if let confirm::Gate::Aborted = confirm::gate(&planned, args.yes, args.json, args.dry_run)? {
+        eprintln!("Aborted.");
+        return Ok(output::EXIT_OK);
+    }
     let outcomes = execute(&planned, &SystemClock, args.dry_run);
     Ok(output::render_run(
         verb,
@@ -138,6 +186,16 @@ fn run_add(args: AddArgs) -> symify_core::Result<u8> {
         }],
     };
     let planned = plan(&single, Verb::Sync)?;
+
+    // A guard failure (protected root, out-of-root directory, …) must abort
+    // before we touch the config — don't record a link we'll refuse to adopt.
+    if let Action::Failed(msg) = &planned[0].action {
+        return Err(Error::config(msg.clone()));
+    }
+    if let confirm::Gate::Aborted = confirm::gate(&planned, args.yes, args.json, args.dry_run)? {
+        eprintln!("Aborted.");
+        return Ok(output::EXIT_OK);
+    }
 
     if args.dry_run {
         let outcomes = execute(&planned, &SystemClock, true);

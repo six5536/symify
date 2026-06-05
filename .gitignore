@@ -13,6 +13,10 @@
 /packages/*/node_modules/
 /node_modules/
 
+# Staged platform binaries (built by `npm run build:<platform>`); the bin/
+# dirs are kept by .gitkeep.
+/packages/symify-*/bin/symify
+
 /.cache/
 *.local.json
 .mise.local.toml

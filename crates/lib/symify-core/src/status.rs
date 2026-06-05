@@ -69,6 +69,8 @@ pub fn status(config: &ResolvedConfig) -> Result<Vec<StatusEntry>> {
             let (live, store) = crate::plan::resolve_paths(m, key, kind);
             let label = if matches!(kind, LinkKind::Disabled) {
                 StatusLabel::Disabled
+            } else if let Some(reason) = crate::plan::guard_reason(m, &live, &store)? {
+                StatusLabel::Failed(reason)
             } else {
                 label_for(&live, &store, m.mode)?
             };

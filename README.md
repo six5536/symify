@@ -66,7 +66,7 @@ symify deploy            # create links in ~ pointing at the store
 live = "~"            # where links/copies appear
 store = "~/dotfiles"  # where the real content lives
 mode = "symlink"      # symlink | hardlink | sync (sync = independent copy)
-conflict = "backup"   # skip | replace | backup (.<timestamp>.bak)
+conflict = "backup"   # skip | replace (overwrite, no backup) | backup (.<timestamp>.bak)
 
 [mappings.dotfiles.links]
 ".config/fish/config.fish" = ""              # "" or true: mirror the key under store
@@ -103,6 +103,22 @@ For path resolution rules, the per-entry state machine, and the full design, see
   separate `init` — any command creates a default config if none exists.
 
 Run `symify <command> --help` for the full reference and exit codes.
+
+## Safety
+
+symify can move and delete files, so it holds itself to a few rules:
+
+- It only ever touches the exact paths in your config — it never scans a
+  directory or tracks files you didn't list.
+- It refuses to act on a protected root (`/`, your home directory, or a
+  mapping's own `live`/`store` root), and anything outside your `live` root must
+  be a single file, not a directory — so a stray `symify add ~` or `add /etc`
+  is rejected, not obeyed.
+- The mutating commands refuse to run as `root` unless you pass `--allow-root`.
+- `conflict = "replace"` is the only setting that deletes without a backup. When
+  a run would recursively delete a directory, symify asks first (`[y/N]`); pass
+  `-y`/`--yes` to skip the prompt, which is required when output isn't a
+  terminal (pipes, `--json`, CI). The default `backup` policy never deletes.
 
 ## Development
 

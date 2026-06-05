@@ -32,6 +32,17 @@ impl NodeKind {
     }
 }
 
+/// True when `path` is a real directory (not a symlink to one) that contains at
+/// least one entry. Used to flag unrecoverable recursive deletes for confirmation.
+pub fn is_nonempty_dir(path: &Path) -> bool {
+    match std::fs::symlink_metadata(path) {
+        Ok(md) if md.is_dir() => std::fs::read_dir(path)
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
 /// Inspect a path without following symlinks.
 pub fn inspect(path: &Path) -> Result<NodeKind> {
     match std::fs::symlink_metadata(path) {
@@ -275,7 +286,7 @@ fn make_symlink(target: &Path, link: &Path) -> Result<()> {
 
 /// Lexically normalize a path (resolve `.` and `..` without touching the
 /// filesystem).
-fn normalize(p: &Path) -> PathBuf {
+pub(crate) fn normalize(p: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for c in p.components() {
         match c {

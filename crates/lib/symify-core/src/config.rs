@@ -170,7 +170,7 @@ pub fn render_starter(live: &str, store: &str) -> String {
 live = "{live}"          # where your files are used
 store = "{store}"        # where the real content is kept (commit this to git)
 mode = "symlink"         # symlink | hardlink | sync (sync = independent copy)
-conflict = "backup"      # skip | replace | backup (.<timestamp>.bak)
+conflict = "backup"      # skip | replace (overwrite, no backup) | backup (.<timestamp>.bak)
 
 # Each entry maps a path (relative to `live`) to how it lives in `store`:
 #   true / ""   mirror the key under `store`
@@ -201,7 +201,7 @@ fn config_base_dir() -> Result<PathBuf> {
 }
 
 /// The user's home directory (Windows-aware via `directories`).
-fn home_dir() -> Result<PathBuf> {
+pub(crate) fn home_dir() -> Result<PathBuf> {
     directories::BaseDirs::new()
         .map(|d| d.home_dir().to_path_buf())
         .ok_or(Error::NoHome)
@@ -289,10 +289,19 @@ pub fn resolve(config: Config) -> Result<ResolvedConfig> {
             .collect();
         links.sort_by(|a, b| a.0.cmp(&b.0));
 
+        let live = expand_path(&live, home.as_deref())?;
+        let store = expand_path(&store, home.as_deref())?;
+        if crate::fs::normalize(&live) == crate::fs::normalize(&store) {
+            return Err(Error::config(format!(
+                "mapping `{name}`: live and store resolve to the same directory ({})",
+                live.display()
+            )));
+        }
+
         mappings.push(ResolvedMapping {
             name,
-            live: expand_path(&live, home.as_deref())?,
-            store: expand_path(&store, home.as_deref())?,
+            live,
+            store,
             mode,
             conflict,
             links,
@@ -483,6 +492,18 @@ mod tests {
         let err = resolve(c).unwrap_err();
         assert!(matches!(err, Error::Config(_)));
         assert!(err.to_string().contains("store"));
+    }
+
+    #[test]
+    fn resolve_rejects_live_equal_store() {
+        let c = cfg(r#"[settings]
+            live = "/same"
+            store = "/same"
+            [mappings.a.links]
+            x = true"#);
+        let err = resolve(c).unwrap_err();
+        assert!(matches!(err, Error::Config(_)));
+        assert!(err.to_string().contains("same directory"));
     }
 
     #[test]
