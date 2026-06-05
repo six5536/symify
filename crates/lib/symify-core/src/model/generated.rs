@@ -215,6 +215,9 @@ impl ::std::convert::From<bool> for LinkValue {
 #[doc = "    \"live\": {"]
 #[doc = "      \"type\": \"string\""]
 #[doc = "    },"]
+#[doc = "    \"mirror\": {"]
+#[doc = "      \"$ref\": \"#/$defs/Mirror\""]
+#[doc = "    },"]
 #[doc = "    \"mode\": {"]
 #[doc = "      \"$ref\": \"#/$defs/Mode\""]
 #[doc = "    },"]
@@ -240,6 +243,8 @@ pub struct Mapping {
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub live: ::std::option::Option<::std::string::String>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub mirror: ::std::option::Option<Mirror>,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub mode: ::std::option::Option<Mode>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub store: ::std::option::Option<::std::string::String>,
@@ -250,9 +255,64 @@ impl ::std::default::Default for Mapping {
             conflict: Default::default(),
             links: Default::default(),
             live: Default::default(),
+            mirror: Default::default(),
             mode: Default::default(),
             store: Default::default(),
         }
+    }
+}
+#[doc = "When true, sync mode prunes files on the destination side that no longer exist in the source (the `--delete` axis). Default false (additive: only add/update, never prune)."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"Mirror\","]
+#[doc = "  \"description\": \"When true, sync mode prunes files on the destination side that no longer exist in the source (the `--delete` axis). Default false (additive: only add/update, never prune).\","]
+#[doc = "  \"type\": \"boolean\""]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Eq, PartialEq)]
+#[serde(transparent)]
+pub struct Mirror(pub bool);
+impl ::std::ops::Deref for Mirror {
+    type Target = bool;
+    fn deref(&self) -> &bool {
+        &self.0
+    }
+}
+impl ::std::convert::From<Mirror> for bool {
+    fn from(value: Mirror) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::From<bool> for Mirror {
+    fn from(value: bool) -> Self {
+        Self(value)
+    }
+}
+impl ::std::str::FromStr for Mirror {
+    type Err = <bool as ::std::str::FromStr>::Err;
+    fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
+        Ok(Self(value.parse()?))
+    }
+}
+impl ::std::convert::TryFrom<&str> for Mirror {
+    type Error = <bool as ::std::str::FromStr>::Err;
+    fn try_from(value: &str) -> ::std::result::Result<Self, Self::Error> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<String> for Mirror {
+    type Error = <bool as ::std::str::FromStr>::Err;
+    fn try_from(value: String) -> ::std::result::Result<Self, Self::Error> {
+        value.parse()
+    }
+}
+impl ::std::fmt::Display for Mirror {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        self.0.fmt(f)
     }
 }
 #[doc = "Link mechanism."]
@@ -266,7 +326,6 @@ impl ::std::default::Default for Mapping {
 #[doc = "  \"type\": \"string\","]
 #[doc = "  \"enum\": ["]
 #[doc = "    \"symlink\","]
-#[doc = "    \"hardlink\","]
 #[doc = "    \"sync\""]
 #[doc = "  ]"]
 #[doc = "}"]
@@ -287,8 +346,6 @@ impl ::std::default::Default for Mapping {
 pub enum Mode {
     #[serde(rename = "symlink")]
     Symlink,
-    #[serde(rename = "hardlink")]
-    Hardlink,
     #[serde(rename = "sync")]
     Sync,
 }
@@ -296,7 +353,6 @@ impl ::std::fmt::Display for Mode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Symlink => f.write_str("symlink"),
-            Self::Hardlink => f.write_str("hardlink"),
             Self::Sync => f.write_str("sync"),
         }
     }
@@ -306,7 +362,6 @@ impl ::std::str::FromStr for Mode {
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
             "symlink" => Ok(Self::Symlink),
-            "hardlink" => Ok(Self::Hardlink),
             "sync" => Ok(Self::Sync),
             _ => Err("invalid value".into()),
         }
@@ -351,6 +406,9 @@ impl ::std::convert::TryFrom<::std::string::String> for Mode {
 #[doc = "      \"description\": \"Working location where links/copies appear (e.g. \\\"~\\\").\","]
 #[doc = "      \"type\": \"string\""]
 #[doc = "    },"]
+#[doc = "    \"mirror\": {"]
+#[doc = "      \"$ref\": \"#/$defs/Mirror\""]
+#[doc = "    },"]
 #[doc = "    \"mode\": {"]
 #[doc = "      \"$ref\": \"#/$defs/Mode\""]
 #[doc = "    },"]
@@ -372,6 +430,8 @@ pub struct Settings {
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub live: ::std::option::Option<::std::string::String>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub mirror: ::std::option::Option<Mirror>,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub mode: ::std::option::Option<Mode>,
     #[doc = "Backing repository that holds the real content (e.g. \"~/dotfiles\")."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -382,6 +442,7 @@ impl ::std::default::Default for Settings {
         Self {
             conflict: Default::default(),
             live: Default::default(),
+            mirror: Default::default(),
             mode: Default::default(),
             store: Default::default(),
         }

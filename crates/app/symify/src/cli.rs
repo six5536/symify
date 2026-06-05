@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
-/// Keep your files in sync with a backing repository — as symlinks, hardlinks, or copies.
+/// Keep your files in sync with a backing repository — as symlinks or copies.
 #[derive(Debug, Parser)]
 #[command(name = "symify", about, long_about = None, disable_version_flag = true)]
 pub struct Cli {
@@ -59,6 +59,20 @@ pub struct RunArgs {
     #[arg(short = 'y', long = "yes")]
     pub yes: bool,
 
+    /// In `sync` mode, prune destination files that no longer exist in the
+    /// source (forces `mirror` on for this run). Off by default.
+    #[arg(long)]
+    pub delete: bool,
+
+    /// In `sync` mode, compare file content exactly instead of by size+mtime.
+    #[arg(long)]
+    pub checksum: bool,
+
+    /// In `sync` mode, treat mtimes within this many seconds as equal (for
+    /// coarse-granularity filesystems). Default 0 (exact).
+    #[arg(long, value_name = "SECONDS", default_value_t = 0)]
+    pub modify_window: u64,
+
     /// Emit machine-readable JSON instead of human output.
     #[arg(long)]
     pub json: bool,
@@ -74,6 +88,14 @@ pub struct QueryArgs {
     /// Limit to these mappings; repeatable. Omitted = all mappings.
     #[arg(short = 'm', long = "mapping", value_name = "MAPPING")]
     pub mapping: Vec<String>,
+
+    /// In `sync` mode, compare file content exactly instead of by size+mtime.
+    #[arg(long)]
+    pub checksum: bool,
+
+    /// In `sync` mode, treat mtimes within this many seconds as equal. Default 0.
+    #[arg(long, value_name = "SECONDS", default_value_t = 0)]
+    pub modify_window: u64,
 
     /// Emit machine-readable JSON instead of human output.
     #[arg(long)]
@@ -235,7 +257,9 @@ mod tests {
 
     #[test]
     fn known_subcommands_and_aliases_untouched() {
-        for cmd in ["sync", "deploy", "status", "add", "remove", "rm", "list", "ls"] {
+        for cmd in [
+            "sync", "deploy", "status", "add", "remove", "rm", "list", "ls",
+        ] {
             assert_eq!(norm(&[cmd]), ["symify", cmd]);
         }
     }

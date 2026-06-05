@@ -23,6 +23,32 @@ pub enum Verb {
     Deploy,
 }
 
+/// Per-run options that influence planning but are not config: the `--checksum`
+/// and `--modify-window` CLI flags. `mirror` is *not* here — it lives on the
+/// resolved mapping (a `--delete` flag is applied as a config override before
+/// planning). Shared by [`plan`] and [`status`] so a status report matches what a
+/// run would decide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RunOptions {
+    /// Force an exact content compare instead of the size+mtime quick-check.
+    pub checksum: bool,
+    /// mtime tolerance in seconds for the quick-check (`0` = exact).
+    pub modify_window: u64,
+}
+
+impl RunOptions {
+    /// Compare two `sync`-mode paths for equality under these options: the exact
+    /// [`fs::checksum_equal`] when `--checksum` is set, else the fast
+    /// [`fs::quick_equal`] with the configured modify-window.
+    pub(crate) fn equal(&self, a: &Path, b: &Path) -> Result<bool> {
+        if self.checksum {
+            fs::checksum_equal(a, b)
+        } else {
+            fs::quick_equal(a, b, self.modify_window)
+        }
+    }
+}
+
 /// A primitive filesystem operation, applied in order by the executor. The
 /// executor creates parent directories of any written path automatically.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,13 +69,6 @@ pub enum FsOp {
         /// The link location.
         link: PathBuf,
         /// The link target.
-        target: PathBuf,
-    },
-    /// Create a hardlink at `link` sharing `target`'s inode.
-    Hardlink {
-        /// The link location.
-        link: PathBuf,
-        /// The existing file to share.
         target: PathBuf,
     },
     /// Copy `from` to `to` (recursive for directories).
@@ -96,6 +115,16 @@ pub enum Action {
         /// Operations in execution order.
         ops: Vec<FsOp>,
     },
+    /// Apply the ordered operations, but a same-path difference was left
+    /// unresolved by `conflict = skip`. The entry both changes files (the pure
+    /// adds and any resolved conflicts) **and** reports drift, so a second run is
+    /// not all-clean until the skipped difference is resolved.
+    ApplyDrift {
+        /// Semantic label for reporting.
+        kind: ActionKind,
+        /// Operations in execution order.
+        ops: Vec<FsOp>,
+    },
 }
 
 /// One planned entry: the resolved paths plus the decided [`Action`].
@@ -118,11 +147,11 @@ pub struct Planned {
 }
 
 /// Plan a run over the whole resolved config.
-pub fn plan(config: &ResolvedConfig, verb: Verb) -> Result<Vec<Planned>> {
+pub fn plan(config: &ResolvedConfig, verb: Verb, opts: RunOptions) -> Result<Vec<Planned>> {
     let mut out = Vec::new();
     for mapping in &config.mappings {
         for (key, value) in &mapping.links {
-            out.push(plan_entry(mapping, key, value, verb)?);
+            out.push(plan_entry(mapping, key, value, verb, opts)?);
         }
     }
     Ok(out)
@@ -133,6 +162,9 @@ pub fn plan(config: &ResolvedConfig, verb: Verb) -> Result<Vec<Planned>> {
 pub enum Outcome {
     /// The action was applied (or, under `--dry-run`, would be applied).
     Applied(ActionKind),
+    /// Applied (or would apply) changes, but a residual `skip`-conflict drift
+    /// remains — the entry is not fully in sync.
+    AppliedDrift(ActionKind),
     /// Already in the desired state.
     AlreadyOk,
     /// Entry disabled.
@@ -146,9 +178,10 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    /// True when the entry represents drift (a conflict, or a pending change).
+    /// True when the entry represents drift (a conflict, or a change applied with
+    /// a residual `skip`-difference still unresolved).
     pub fn is_drift(&self) -> bool {
-        matches!(self, Outcome::Conflict)
+        matches!(self, Outcome::Conflict | Outcome::AppliedDrift(_))
     }
 
     /// True when the entry failed.
@@ -174,21 +207,39 @@ fn execute_one(p: &Planned, clock: &dyn Clock, dry_run: bool) -> Outcome {
         Action::Skip(reason) => Outcome::Skipped(reason),
         Action::Conflict => Outcome::Conflict,
         Action::Failed(msg) => Outcome::Failed(msg.clone()),
-        Action::Apply { kind, ops } => {
-            if dry_run {
-                return Outcome::Applied(*kind);
-            }
-            for op in ops {
-                if let Err(e) = fs::apply_op(op, clock) {
-                    return Outcome::Failed(e.to_string());
-                }
-            }
-            Outcome::Applied(*kind)
+        Action::Apply { kind, ops } => run_ops(ops, *kind, Outcome::Applied(*kind), clock, dry_run),
+        Action::ApplyDrift { kind, ops } => {
+            run_ops(ops, *kind, Outcome::AppliedDrift(*kind), clock, dry_run)
         }
     }
 }
 
-fn plan_entry(m: &ResolvedMapping, key: &str, value: &LinkValue, verb: Verb) -> Result<Planned> {
+/// Run an action's ops (unless `dry_run`), returning `applied` on success.
+fn run_ops(
+    ops: &[FsOp],
+    _kind: ActionKind,
+    applied: Outcome,
+    clock: &dyn Clock,
+    dry_run: bool,
+) -> Outcome {
+    if dry_run {
+        return applied;
+    }
+    for op in ops {
+        if let Err(e) = fs::apply_op(op, clock) {
+            return Outcome::Failed(e.to_string());
+        }
+    }
+    applied
+}
+
+fn plan_entry(
+    m: &ResolvedMapping,
+    key: &str,
+    value: &LinkValue,
+    verb: Verb,
+    opts: RunOptions,
+) -> Result<Planned> {
     let kind = value.kind();
     let make = |live: PathBuf, store: PathBuf, action: Action| Planned {
         mapping: m.name.clone(),
@@ -214,8 +265,8 @@ fn plan_entry(m: &ResolvedMapping, key: &str, value: &LinkValue, verb: Verb) -> 
     }
 
     let action = match verb {
-        Verb::Sync => plan_sync(&s, &d, m.mode, m.conflict)?,
-        Verb::Deploy => plan_deploy(&s, &d, m.mode, m.conflict)?,
+        Verb::Sync => plan_sync(&s, &d, m, opts)?,
+        Verb::Deploy => plan_deploy(&s, &d, m, opts)?,
     };
     Ok(make(s, d, action))
 }
@@ -304,44 +355,29 @@ pub(crate) fn resolve_paths(m: &ResolvedMapping, key: &str, kind: LinkKind) -> (
     (live, store)
 }
 
-fn link_op(s: &Path, d: &Path, mode: Mode) -> FsOp {
-    match mode {
-        Mode::Hardlink => FsOp::Hardlink {
-            link: s.to_path_buf(),
-            target: d.to_path_buf(),
-        },
-        _ => FsOp::Symlink {
-            link: s.to_path_buf(),
-            target: d.to_path_buf(),
-        },
+fn link_op(s: &Path, d: &Path) -> FsOp {
+    FsOp::Symlink {
+        link: s.to_path_buf(),
+        target: d.to_path_buf(),
     }
 }
 
 // ----- sync (live -> store) ---------------------------------------------
 
-fn plan_sync(s: &Path, d: &Path, mode: Mode, conflict: Conflict) -> Result<Action> {
+fn plan_sync(s: &Path, d: &Path, m: &ResolvedMapping, opts: RunOptions) -> Result<Action> {
     let s_state = fs::inspect(s)?;
-    match mode {
-        Mode::Symlink | Mode::Hardlink => plan_sync_link(s, d, mode, conflict, s_state),
-        Mode::Sync => plan_sync_copy(s, d, conflict, s_state),
+    match m.mode {
+        Mode::Symlink => plan_sync_link(s, d, m.conflict, s_state),
+        Mode::Sync => plan_sync_copy(s, d, m.conflict, s_state, opts, m.mirror),
     }
 }
 
-fn plan_sync_link(
-    s: &Path,
-    d: &Path,
-    mode: Mode,
-    conflict: Conflict,
-    s_state: NodeKind,
-) -> Result<Action> {
+fn plan_sync_link(s: &Path, d: &Path, conflict: Conflict, s_state: NodeKind) -> Result<Action> {
     match s_state {
         NodeKind::Missing => Ok(Action::Skip("live path missing — nothing to capture")),
         NodeKind::Symlink(_) => {
             // A link carries no independent content to capture.
-            if mode == Mode::Symlink
-                && fs::symlink_points_to(s, d)?
-                && !fs::inspect(d)?.is_missing()
-            {
+            if fs::symlink_points_to(s, d)? && !fs::inspect(d)?.is_missing() {
                 Ok(Action::AlreadyOk)
             } else {
                 Ok(Action::Skip(
@@ -349,97 +385,68 @@ fn plan_sync_link(
                 ))
             }
         }
-        NodeKind::File | NodeKind::Dir => {
-            if mode == Mode::Hardlink {
-                if fs::same_inode(s, d)? {
-                    return Ok(Action::AlreadyOk);
-                }
-                if s_state == NodeKind::Dir {
-                    return Ok(Action::Failed(
-                        "hardlink mode cannot link a directory".into(),
-                    ));
-                }
-            }
-            match fs::inspect(d)? {
-                NodeKind::Missing => Ok(Action::Apply {
+        NodeKind::File | NodeKind::Dir => match fs::inspect(d)? {
+            NodeKind::Missing => Ok(Action::Apply {
+                kind: ActionKind::Adopt,
+                ops: vec![mv(s, d), link_op(s, d)],
+            }),
+            _ if fs::content_equal(s, d)? => Ok(Action::Apply {
+                kind: ActionKind::Relink,
+                ops: vec![FsOp::Remove(s.to_path_buf()), link_op(s, d)],
+            }),
+            _ => match conflict {
+                Conflict::Skip => Ok(Action::Conflict),
+                Conflict::Backup => Ok(Action::Apply {
                     kind: ActionKind::Adopt,
-                    ops: vec![mv(s, d), link_op(s, d, mode)],
+                    ops: vec![FsOp::Backup(d.to_path_buf()), mv(s, d), link_op(s, d)],
                 }),
-                _ if fs::content_equal(s, d)? => Ok(Action::Apply {
-                    kind: ActionKind::Relink,
-                    ops: vec![FsOp::Remove(s.to_path_buf()), link_op(s, d, mode)],
+                Conflict::Replace => Ok(Action::Apply {
+                    kind: ActionKind::Adopt,
+                    ops: vec![FsOp::Remove(d.to_path_buf()), mv(s, d), link_op(s, d)],
                 }),
-                _ => match conflict {
-                    Conflict::Skip => Ok(Action::Conflict),
-                    Conflict::Backup => Ok(Action::Apply {
-                        kind: ActionKind::Adopt,
-                        ops: vec![FsOp::Backup(d.to_path_buf()), mv(s, d), link_op(s, d, mode)],
-                    }),
-                    Conflict::Replace => Ok(Action::Apply {
-                        kind: ActionKind::Adopt,
-                        ops: vec![FsOp::Remove(d.to_path_buf()), mv(s, d), link_op(s, d, mode)],
-                    }),
-                },
-            }
-        }
-    }
-}
-
-fn plan_sync_copy(s: &Path, d: &Path, conflict: Conflict, s_state: NodeKind) -> Result<Action> {
-    if s_state.is_missing() {
-        return Ok(Action::Skip("live path missing — nothing to capture"));
-    }
-    match fs::inspect(d)? {
-        NodeKind::Missing => Ok(Action::Apply {
-            kind: ActionKind::Push,
-            ops: vec![cp(s, d)],
-        }),
-        _ if fs::synced_equal(s, d)? => Ok(Action::AlreadyOk),
-        _ => match conflict {
-            Conflict::Skip => Ok(Action::Conflict),
-            Conflict::Backup => Ok(Action::Apply {
-                kind: ActionKind::Push,
-                ops: vec![FsOp::Backup(d.to_path_buf()), cp(s, d)],
-            }),
-            Conflict::Replace => Ok(Action::Apply {
-                kind: ActionKind::Push,
-                ops: vec![FsOp::Remove(d.to_path_buf()), cp(s, d)],
-            }),
+            },
         },
     }
 }
 
+fn plan_sync_copy(
+    s: &Path,
+    d: &Path,
+    conflict: Conflict,
+    s_state: NodeKind,
+    opts: RunOptions,
+    mirror: bool,
+) -> Result<Action> {
+    if s_state.is_missing() {
+        return Ok(Action::Skip("live path missing — nothing to capture"));
+    }
+    // sync copies live (s) → store (d), pruning store-only entries when mirror.
+    diff_copy(s, d, conflict, mirror, opts, ActionKind::Push)
+}
+
 // ----- deploy (store -> live) -------------------------------------------
 
-fn plan_deploy(s: &Path, d: &Path, mode: Mode, conflict: Conflict) -> Result<Action> {
+fn plan_deploy(s: &Path, d: &Path, m: &ResolvedMapping, opts: RunOptions) -> Result<Action> {
     if fs::inspect(d)?.is_missing() {
         return Ok(Action::Skip("store path missing — nothing to deploy"));
     }
-    match mode {
-        Mode::Symlink | Mode::Hardlink => plan_deploy_link(s, d, mode, conflict),
-        Mode::Sync => plan_deploy_copy(s, d, conflict),
+    match m.mode {
+        Mode::Symlink => plan_deploy_link(s, d, m.conflict),
+        Mode::Sync => plan_deploy_copy(s, d, m.conflict, opts, m.mirror),
     }
 }
 
-fn plan_deploy_link(s: &Path, d: &Path, mode: Mode, conflict: Conflict) -> Result<Action> {
-    if mode == Mode::Hardlink && fs::inspect(d)? == NodeKind::Dir {
-        return Ok(Action::Failed(
-            "hardlink mode cannot link a directory".into(),
-        ));
-    }
-
+fn plan_deploy_link(s: &Path, d: &Path, conflict: Conflict) -> Result<Action> {
     // Already in desired state?
-    match mode {
-        Mode::Symlink if fs::symlink_points_to(s, d)? => return Ok(Action::AlreadyOk),
-        Mode::Hardlink if fs::same_inode(s, d)? => return Ok(Action::AlreadyOk),
-        _ => {}
+    if fs::symlink_points_to(s, d)? {
+        return Ok(Action::AlreadyOk);
     }
 
     let s_state = fs::inspect(s)?;
     if s_state.is_missing() {
         return Ok(Action::Apply {
             kind: ActionKind::Link,
-            ops: vec![link_op(s, d, mode)],
+            ops: vec![link_op(s, d)],
         });
     }
 
@@ -449,43 +456,131 @@ fn plan_deploy_link(s: &Path, d: &Path, mode: Mode, conflict: Conflict) -> Resul
     if can_relink {
         return Ok(Action::Apply {
             kind: ActionKind::Relink,
-            ops: vec![FsOp::Remove(s.to_path_buf()), link_op(s, d, mode)],
+            ops: vec![FsOp::Remove(s.to_path_buf()), link_op(s, d)],
         });
     }
     match conflict {
         Conflict::Skip => Ok(Action::Conflict),
         Conflict::Backup => Ok(Action::Apply {
             kind: ActionKind::Link,
-            ops: vec![FsOp::Backup(s.to_path_buf()), link_op(s, d, mode)],
+            ops: vec![FsOp::Backup(s.to_path_buf()), link_op(s, d)],
         }),
         Conflict::Replace => Ok(Action::Apply {
             kind: ActionKind::Link,
-            ops: vec![FsOp::Remove(s.to_path_buf()), link_op(s, d, mode)],
+            ops: vec![FsOp::Remove(s.to_path_buf()), link_op(s, d)],
         }),
     }
 }
 
-fn plan_deploy_copy(s: &Path, d: &Path, conflict: Conflict) -> Result<Action> {
-    let s_state = fs::inspect(s)?;
-    if s_state.is_missing() {
-        return Ok(Action::Apply {
-            kind: ActionKind::Pull,
-            ops: vec![cp(d, s)],
-        });
+fn plan_deploy_copy(
+    s: &Path,
+    d: &Path,
+    conflict: Conflict,
+    opts: RunOptions,
+    mirror: bool,
+) -> Result<Action> {
+    // deploy copies store (d) → live (s), pruning live-only entries when mirror.
+    diff_copy(d, s, conflict, mirror, opts, ActionKind::Pull)
+}
+
+/// Diff a `sync`-mode entry's `src` against `dst` and decide its [`Action`]:
+/// walk per-file, emitting `Copy`/`Backup`/`Remove` ops only where they differ,
+/// pruning `dst`-only entries when `mirror` is set. Aggregates an unresolved
+/// `skip`-difference into the drift-bearing outcome.
+fn diff_copy(
+    src: &Path,
+    dst: &Path,
+    conflict: Conflict,
+    mirror: bool,
+    opts: RunOptions,
+    kind: ActionKind,
+) -> Result<Action> {
+    let mut ops = Vec::new();
+    let mut drift = false;
+    walk_copy(src, dst, conflict, mirror, opts, &mut ops, &mut drift)?;
+    Ok(if ops.is_empty() {
+        if drift {
+            Action::Conflict
+        } else {
+            Action::AlreadyOk
+        }
+    } else if drift {
+        Action::ApplyDrift { kind, ops }
+    } else {
+        Action::Apply { kind, ops }
+    })
+}
+
+/// Recursive worker for [`diff_copy`]. `src` is known to exist. Emits copy/backup
+/// ops for changed source entries (before any prunes, for readable output) and,
+/// when `mirror`, prune ops for `dst`-only entries. Sets `drift` when a
+/// `conflict = skip` difference is left unresolved.
+fn walk_copy(
+    src: &Path,
+    dst: &Path,
+    conflict: Conflict,
+    mirror: bool,
+    opts: RunOptions,
+    ops: &mut Vec<FsOp>,
+    drift: &mut bool,
+) -> Result<()> {
+    if fs::inspect(dst)?.is_missing() {
+        // Nothing on the destination — copy the whole (sub)tree or file.
+        ops.push(cp(src, dst));
+        return Ok(());
     }
-    if fs::synced_equal(s, d)? {
-        return Ok(Action::AlreadyOk);
+
+    let both_dirs = fs::inspect(src)? == NodeKind::Dir && fs::inspect(dst)? == NodeKind::Dir;
+    if both_dirs {
+        let src_names = fs::dir_entries(src)?;
+        let dst_names = fs::dir_entries(dst)?;
+        // Source entries: add or update (recursing — copies emitted first).
+        for name in &src_names {
+            walk_copy(
+                &src.join(name),
+                &dst.join(name),
+                conflict,
+                mirror,
+                opts,
+                ops,
+                drift,
+            )?;
+        }
+        // Destination-only entries: prune when mirror is on.
+        if mirror {
+            for name in dst_names.difference(&src_names) {
+                prune(&dst.join(name), conflict, ops, drift);
+            }
+        }
+        return Ok(());
+    }
+
+    // At least one side is a file/symlink (or the kinds differ). Compare; if they
+    // already match there is nothing to do, otherwise apply the conflict policy.
+    if opts.equal(src, dst)? {
+        return Ok(());
     }
     match conflict {
-        Conflict::Skip => Ok(Action::Conflict),
-        Conflict::Backup => Ok(Action::Apply {
-            kind: ActionKind::Pull,
-            ops: vec![FsOp::Backup(s.to_path_buf()), cp(d, s)],
-        }),
-        Conflict::Replace => Ok(Action::Apply {
-            kind: ActionKind::Pull,
-            ops: vec![FsOp::Remove(s.to_path_buf()), cp(d, s)],
-        }),
+        Conflict::Skip => *drift = true,
+        Conflict::Backup => {
+            ops.push(FsOp::Backup(dst.to_path_buf()));
+            ops.push(cp(src, dst));
+        }
+        Conflict::Replace => {
+            ops.push(FsOp::Remove(dst.to_path_buf()));
+            ops.push(cp(src, dst));
+        }
+    }
+    Ok(())
+}
+
+/// Dispose of a destination-only entry under mirror, per the conflict policy:
+/// `skip` leaves it (drift), `backup` renames it to `.bak`, `replace` deletes it.
+fn prune(path: &Path, conflict: Conflict, ops: &mut Vec<FsOp>, drift: &mut bool) {
+    match conflict {
+        Conflict::Skip => *drift = true,
+        Conflict::Backup => ops.push(FsOp::Backup(path.to_path_buf())),
+        Conflict::Replace => ops.push(FsOp::Remove(path.to_path_buf())),
     }
 }
 
@@ -542,9 +637,6 @@ mod tests {
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, c).unwrap();
         }
-        fn mkdir(&self, p: &Path) {
-            std::fs::create_dir_all(p).unwrap();
-        }
         fn cfg(
             &self,
             mode: Mode,
@@ -558,6 +650,7 @@ mod tests {
                     store: self.store.clone(),
                     mode,
                     conflict,
+                    mirror: false,
                     links: links.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
                 }],
             }
@@ -572,7 +665,14 @@ mod tests {
     }
 
     fn act(cfg: &ResolvedConfig, verb: Verb) -> Action {
-        let mut planned = plan(cfg, verb).unwrap();
+        let mut planned = plan(cfg, verb, RunOptions::default()).unwrap();
+        assert_eq!(planned.len(), 1, "expected exactly one entry");
+        planned.remove(0).action
+    }
+
+    /// Like [`act`] but with explicit run options (checksum / modify-window).
+    fn act_opts(cfg: &ResolvedConfig, verb: Verb, opts: RunOptions) -> Action {
+        let mut planned = plan(cfg, verb, opts).unwrap();
         assert_eq!(planned.len(), 1, "expected exactly one entry");
         planned.remove(0).action
     }
@@ -586,6 +686,7 @@ mod tests {
         let p = plan(
             &fx.cfg(Mode::Symlink, Conflict::Backup, vec![(".bashrc", t())]),
             Verb::Deploy,
+            RunOptions::default(),
         )
         .unwrap();
         assert_eq!(p[0].live, fx.lp(".bashrc"));
@@ -594,6 +695,7 @@ mod tests {
         let p = plan(
             &fx.cfg(Mode::Symlink, Conflict::Backup, vec![("/etc/x.conf", t())]),
             Verb::Deploy,
+            RunOptions::default(),
         )
         .unwrap();
         assert_eq!(p[0].live, PathBuf::from("/etc/x.conf"));
@@ -606,6 +708,7 @@ mod tests {
                 vec![("profile", LinkValue::String("fixed/p".into()))],
             ),
             Verb::Deploy,
+            RunOptions::default(),
         )
         .unwrap();
         assert_eq!(p[0].store, fx.sp("fixed/p"));
@@ -743,33 +846,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn sync_hardlink_dir_fails() {
-        let fx = Fx::new();
-        fx.mkdir(&fx.lp("d"));
-        assert!(matches!(
-            act(
-                &fx.cfg(Mode::Hardlink, Conflict::Backup, vec![("d", t())]),
-                Verb::Sync
-            ),
-            Action::Failed(_)
-        ));
-    }
-
-    #[test]
-    fn sync_hardlink_already_ok_when_same_inode() {
-        let fx = Fx::new();
-        fx.write(&fx.sp("x"), b"x");
-        std::fs::hard_link(fx.sp("x"), fx.lp("x")).unwrap();
-        assert_eq!(
-            act(
-                &fx.cfg(Mode::Hardlink, Conflict::Backup, vec![("x", t())]),
-                Verb::Sync
-            ),
-            Action::AlreadyOk
-        );
-    }
-
     // ---- sync, copy mode ----
 
     #[test]
@@ -792,11 +868,46 @@ mod tests {
         );
     }
 
+    /// Set `dst`'s mtime equal to `src`'s, modelling a `sync` copy (which
+    /// preserves mtime) so the size+mtime quick-check sees the pair as in sync.
+    fn match_mtime(src: &Path, dst: &Path) {
+        let t = std::fs::metadata(src).unwrap().modified().unwrap();
+        let f = std::fs::OpenOptions::new().write(true).open(dst).unwrap();
+        f.set_times(std::fs::FileTimes::new().set_modified(t))
+            .unwrap();
+    }
+
+    fn mtime(p: &Path) -> std::time::SystemTime {
+        std::fs::metadata(p).unwrap().modified().unwrap()
+    }
+
+    fn set_mtime(p: &Path, t: std::time::SystemTime) {
+        let f = std::fs::OpenOptions::new().write(true).open(p).unwrap();
+        f.set_times(std::fs::FileTimes::new().set_modified(t))
+            .unwrap();
+    }
+
+    /// Build an in-sync `store` mirror of two live files, with matching mtimes,
+    /// so a follow-up `sync` sees the tree as already captured.
+    fn synced_dir(fx: &Fx) {
+        for f in ["dir/a", "dir/b"] {
+            fx.write(&fx.lp(f), f.as_bytes());
+            fx.write(&fx.sp(f), f.as_bytes());
+            match_mtime(&fx.lp(f), &fx.sp(f));
+        }
+    }
+
+    fn with_mirror(mut c: ResolvedConfig) -> ResolvedConfig {
+        c.mappings[0].mirror = true;
+        c
+    }
+
     #[test]
     fn sync_copy_already_ok_when_equal() {
         let fx = Fx::new();
         fx.write(&fx.lp("x"), b"d");
         fx.write(&fx.sp("x"), b"d");
+        match_mtime(&fx.lp("x"), &fx.sp("x")); // in sync: same content, size, mtime
         assert_eq!(
             act(
                 &fx.cfg(Mode::Sync, Conflict::Backup, vec![("x", t())]),
@@ -804,6 +915,187 @@ mod tests {
             ),
             Action::AlreadyOk
         );
+    }
+
+    #[test]
+    fn sync_copy_unchanged_tree_is_already_ok() {
+        let fx = Fx::new();
+        synced_dir(&fx);
+        assert_eq!(
+            act(
+                &fx.cfg(Mode::Sync, Conflict::Backup, vec![("dir", t())]),
+                Verb::Sync
+            ),
+            Action::AlreadyOk
+        );
+    }
+
+    #[test]
+    fn sync_copy_one_changed_file_does_not_recopy_tree() {
+        // The headline win: changing one file in a dir yields ops for *only* that
+        // file, never a whole-tree recopy.
+        let fx = Fx::new();
+        synced_dir(&fx);
+        fx.write(&fx.lp("dir/b"), b"b-changed-bigger"); // different size → detected
+        assert_eq!(
+            act(
+                &fx.cfg(Mode::Sync, Conflict::Replace, vec![("dir", t())]),
+                Verb::Sync
+            ),
+            Action::Apply {
+                kind: ActionKind::Push,
+                ops: vec![
+                    FsOp::Remove(fx.sp("dir/b")),
+                    cp(&fx.lp("dir/b"), &fx.sp("dir/b")),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn sync_copy_new_file_is_added() {
+        let fx = Fx::new();
+        synced_dir(&fx);
+        fx.write(&fx.lp("dir/c"), b"c"); // brand-new, absent in store
+        assert_eq!(
+            act(
+                &fx.cfg(Mode::Sync, Conflict::Backup, vec![("dir", t())]),
+                Verb::Sync
+            ),
+            Action::Apply {
+                kind: ActionKind::Push,
+                ops: vec![cp(&fx.lp("dir/c"), &fx.sp("dir/c"))],
+            }
+        );
+    }
+
+    #[test]
+    fn sync_copy_partial_apply_with_skip_drift() {
+        // Decision #1: a new file is copied even under `skip`, while a same-path
+        // difference is left as drift — surfaced via ApplyDrift.
+        let fx = Fx::new();
+        synced_dir(&fx);
+        fx.write(&fx.lp("dir/c"), b"c"); // new → copied
+        fx.write(&fx.lp("dir/b"), b"b-changed-bigger"); // differs → skipped (drift)
+        assert_eq!(
+            act(
+                &fx.cfg(Mode::Sync, Conflict::Skip, vec![("dir", t())]),
+                Verb::Sync
+            ),
+            Action::ApplyDrift {
+                kind: ActionKind::Push,
+                ops: vec![cp(&fx.lp("dir/c"), &fx.sp("dir/c"))],
+            }
+        );
+    }
+
+    #[test]
+    fn sync_mirror_off_leaves_extraneous_store_file() {
+        let fx = Fx::new();
+        synced_dir(&fx);
+        fx.write(&fx.sp("dir/extra"), b"orphan"); // store-only, no live counterpart
+        // mirror off (default): not pruned, nothing to do.
+        assert_eq!(
+            act(
+                &fx.cfg(Mode::Sync, Conflict::Replace, vec![("dir", t())]),
+                Verb::Sync
+            ),
+            Action::AlreadyOk
+        );
+    }
+
+    #[test]
+    fn sync_mirror_on_prunes_extraneous_per_conflict() {
+        let fx = Fx::new();
+        synced_dir(&fx);
+        fx.write(&fx.sp("dir/extra"), b"orphan");
+        // replace → hard delete the orphan.
+        assert_eq!(
+            act(
+                &with_mirror(fx.cfg(Mode::Sync, Conflict::Replace, vec![("dir", t())])),
+                Verb::Sync
+            ),
+            Action::Apply {
+                kind: ActionKind::Push,
+                ops: vec![FsOp::Remove(fx.sp("dir/extra"))],
+            }
+        );
+        // backup → rename the orphan to `.bak`.
+        assert_eq!(
+            act(
+                &with_mirror(fx.cfg(Mode::Sync, Conflict::Backup, vec![("dir", t())])),
+                Verb::Sync
+            ),
+            Action::Apply {
+                kind: ActionKind::Push,
+                ops: vec![FsOp::Backup(fx.sp("dir/extra"))],
+            }
+        );
+        // skip → leave it, report drift.
+        assert_eq!(
+            act(
+                &with_mirror(fx.cfg(Mode::Sync, Conflict::Skip, vec![("dir", t())])),
+                Verb::Sync
+            ),
+            Action::Conflict
+        );
+    }
+
+    #[test]
+    fn sync_ignores_own_bak_artifacts() {
+        // Decision #2: a `.bak` on the store side is never pruned, even with mirror.
+        let fx = Fx::new();
+        synced_dir(&fx);
+        fx.write(&fx.sp("dir/old.20260101.bak"), b"backup");
+        assert_eq!(
+            act(
+                &with_mirror(fx.cfg(Mode::Sync, Conflict::Replace, vec![("dir", t())])),
+                Verb::Sync
+            ),
+            Action::AlreadyOk
+        );
+    }
+
+    #[test]
+    fn sync_checksum_ignores_mtime_only_change() {
+        // Decision #4/#6: bump mtime without changing content. Quick-check sees a
+        // difference; --checksum recognises the content is identical.
+        let fx = Fx::new();
+        fx.write(&fx.lp("x"), b"same");
+        fx.write(&fx.sp("x"), b"same");
+        match_mtime(&fx.lp("x"), &fx.sp("x"));
+        let later = mtime(&fx.lp("x")) + std::time::Duration::from_secs(5);
+        set_mtime(&fx.lp("x"), later);
+
+        let cfg = fx.cfg(Mode::Sync, Conflict::Replace, vec![("x", t())]);
+        // Default quick-check: mtime drift → re-sync.
+        assert!(matches!(act(&cfg, Verb::Sync), Action::Apply { .. }));
+        // --checksum: content identical → already ok.
+        let checksum = RunOptions {
+            checksum: true,
+            modify_window: 0,
+        };
+        assert_eq!(act_opts(&cfg, Verb::Sync, checksum), Action::AlreadyOk);
+    }
+
+    #[test]
+    fn sync_modify_window_tolerates_mtime_skew() {
+        let fx = Fx::new();
+        fx.write(&fx.lp("x"), b"same");
+        fx.write(&fx.sp("x"), b"same");
+        match_mtime(&fx.lp("x"), &fx.sp("x"));
+        let skewed = mtime(&fx.sp("x")) + std::time::Duration::from_secs(1);
+        set_mtime(&fx.sp("x"), skewed);
+
+        let cfg = fx.cfg(Mode::Sync, Conflict::Replace, vec![("x", t())]);
+        // Exact (window 0): 1s skew counts as a difference.
+        assert!(matches!(act(&cfg, Verb::Sync), Action::Apply { .. }));
+        // window 1: tolerated as equal.
+        let windowed = RunOptions {
+            checksum: false,
+            modify_window: 1,
+        };
+        assert_eq!(act_opts(&cfg, Verb::Sync, windowed), Action::AlreadyOk);
     }
 
     // ---- deploy ----
@@ -903,19 +1195,6 @@ mod tests {
     }
 
     #[test]
-    fn deploy_hardlink_dir_fails() {
-        let fx = Fx::new();
-        fx.mkdir(&fx.sp("d"));
-        assert!(matches!(
-            act(
-                &fx.cfg(Mode::Hardlink, Conflict::Backup, vec![("d", t())]),
-                Verb::Deploy
-            ),
-            Action::Failed(_)
-        ));
-    }
-
-    #[test]
     fn deploy_copy_pulls_when_live_missing() {
         let fx = Fx::new();
         fx.write(&fx.sp("x"), b"data");
@@ -1011,6 +1290,7 @@ mod tests {
                 live,
                 mode: Mode::Symlink,
                 conflict: Conflict::Backup,
+                mirror: false,
                 links: vec![("sub".to_string(), t())],
             }],
         };

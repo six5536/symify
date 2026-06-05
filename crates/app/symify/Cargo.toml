@@ -1,6 +1,6 @@
 [package]
 name = "symify"
-description = "Keep your files in sync with a backing repository — as symlinks, hardlinks, or copies."
+description = "Keep your files in sync with a backing repository — as symlinks or copies."
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

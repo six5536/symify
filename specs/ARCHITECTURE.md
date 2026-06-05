@@ -1,8 +1,8 @@
 # symify — Architecture
 
 symify is a CLI tool that keeps files in a working location in sync with a
-managed backing repository, using symlinks, hardlinks, or copies — a
-dotfiles-style file manager.
+managed backing repository, using symlinks or copies — a dotfiles-style file
+manager.
 
 The core is written in Rust and shipped two ways:
 
@@ -20,7 +20,7 @@ Two location roots:
 - **`store`** — the managed backing repository that holds the real content
   (e.g. `~/dotfiles`), typically under version control.
 
-In `symlink` and `hardlink` modes the **link always lives at `live`** and points
+In `symlink` mode the **link always lives at `live`** and points
 to the real file in `store`. **Adopting** existing live files into the store is
 the central workflow, not an add-on: the first run on an existing machine pulls
 your real files into `store` and replaces them with links; a fresh machine
@@ -47,14 +47,20 @@ starter template, `live = ~`, `store = ~/dotfiles`) when none exists. Mappings
 are selected with `-m/--mapping` (repeatable filter on the run/query verbs;
 single value defaulting to the sole mapping on `add`/`remove`).
 
-**Modes — mechanism** (`mode = symlink | hardlink | sync`):
+**Modes — mechanism** (`mode = symlink | sync`):
 
 - `symlink` (default) — a symbolic link at `live` pointing to the file in
   `store`.
-- `hardlink` — a hard link at `live` sharing the store file's inode (same volume
-  only; cannot span directories — see [directory entries](#directory-entries)).
-- `sync` — an independent content **copy** (no link). The mode name collides with
-  the `sync` verb; the two are orthogonal and the collision is accepted.
+- `sync` — an independent content **copy** (no link), kept up to date
+  incrementally (rsync-style: only changed files are copied). The mode name
+  collides with the `sync` verb; the two are orthogonal and the collision is
+  accepted.
+
+`sync`-mode copies are governed by three per-run flags (and the `mirror` config
+axis): `--checksum` (exact content compare instead of size+mtime), `--delete`
+(prune destination files with no source counterpart — the `mirror` axis), and
+`--modify-window <SECONDS>` (mtime tolerance for coarse filesystems). See
+[sync mode](#sync-mode-incremental-copy).
 
 `--dry-run` is available on `sync` and `deploy`. All verbs support human-readable
 and `--json` output.
@@ -83,14 +89,18 @@ For one entry: live path **`S`**, store path **`D`**. "Differs" is judged by the
 
 ### `sync` (live → store)
 
-| `S` (live) | `D` (store) | `symlink` / `hardlink` | `sync` (copy) |
+| `S` (live) | `D` (store) | `symlink` | `sync` (copy) |
 |---|---|---|---|
 | missing | any | nothing to push → skip | nothing to push → skip |
 | real file | missing | **adopt**: move `S`→`D`, then link `S`→`D` | copy `S`→`D` (`S` stays a real file) |
 | real file | exists, same content | **relink**: remove `S`, link `S`→`D` (no backup needed) | AlreadyOk |
-| real file | exists, differs | **back up `D`**, move `S`→`D`, link `S`→`D` | **back up `D`**, copy `S`→`D` |
+| real file | exists, differs | **back up `D`**, move `S`→`D`, link `S`→`D` | per-file diff: back up/replace only changed files |
 | already a correct link → `D` | exists | AlreadyOk | — |
 | copy matching `D` | exists | — | AlreadyOk |
+
+For `sync`-mode **directories** the copy is a per-file diff, not a whole-tree
+recopy — see [sync mode](#sync-mode-incremental-copy) for adds, prunes, and the
+partial-apply/drift rule.
 
 The "same content" relink case applies when the live file already matches the
 store (e.g. re-running after a manual edit that happened to converge): there is
@@ -118,7 +128,7 @@ The `conflict` setting selects the policy for that overwrite:
 - `backup` (recommended default behavior for safety) — rename to
   `<name>.<timestamp>.bak`, then write. Timestamp format `YYYYMMDDHHMMSS`.
 
-Once a `symlink`/`hardlink` entry is established, `S` is a link with no
+Once a `symlink` entry is established, `S` is a link with no
 independent content, so `sync` is a no-op for it (edits flow through to `D`).
 `sync`-mode (copy) entries have real bytes on both sides, so `sync` and `deploy`
 remain meaningful in both directions.
@@ -174,19 +184,21 @@ the planner stays pure.
 [settings]
 live = "~"            # working location (links/copies appear here)
 store = "~/dotfiles"  # backing repository (real content lives here)
-mode = "symlink"      # symlink | hardlink | sync
+mode = "symlink"      # symlink | sync
 conflict = "backup"   # skip | replace | backup
+mirror = false        # sync mode: prune destination-only files (the --delete axis)
 
 [mappings.dotfiles]
-# optional per-mapping overrides of live / store / mode / conflict
+# optional per-mapping overrides of live / store / mode / conflict / mirror
 
 [mappings.dotfiles.links]
 # entries described below
 ```
 
 `[settings]` provides defaults; each `[mappings.<name>]` may override `live`,
-`store`, `mode`, and `conflict`. Paths support `~` and environment-variable
-expansion (Windows-aware) and are normalized to absolute paths before planning.
+`store`, `mode`, `conflict`, and `mirror`. Paths support `~` and
+environment-variable expansion (Windows-aware) and are normalized to absolute
+paths before planning.
 
 ### Loading and merge order
 
@@ -202,7 +214,7 @@ exactly this config." Merge granularity within the active set:
 - `[settings]` — per-key deep merge (a drop-in can flip just `conflict`).
 - `[mappings]` — distinct names accumulate; same-named mappings deep-merge
   (their `links` combine, later file wins per duplicate key; later `mode` /
-  `conflict` / root overrides apply).
+  `conflict` / `mirror` / root overrides apply).
 
 ## Link resolution
 
@@ -231,11 +243,12 @@ the store-side path (real content).
 
 ### Directory entries
 
-A key may resolve to a directory; it is linked/copied **as a whole unit**:
-`symlink`/`hardlink` create one link to the entire directory, `sync` copies the
-tree recursively. Because hardlinks cannot point at directories, a directory
-entry in `hardlink` mode is an **error** with a clear message (no silent
-per-file folding). Stow-style per-file folding is out of scope for v1.
+A key may resolve to a directory. In `symlink` mode it is linked **as a whole
+unit** (one link to the entire directory). In `sync` mode the directory is kept
+in sync by a **per-file diff** (see [sync mode](#sync-mode-incremental-copy)):
+only changed files are copied, and the `mirror` axis governs pruning of
+destination-only files. Stow-style per-file folding (one link per file) is out of
+scope for v1.
 
 ### Correctness tests
 
@@ -244,18 +257,62 @@ An entry is AlreadyOk (no-op) when:
 - `symlink`: `S` is a symlink whose **resolved** target equals `D` (canonicalize
   and compare, so an equivalent spelling isn't needlessly rewritten). Symlinks
   are written with **absolute** targets.
-- `hardlink`: `S` and `D` share a device + inode.
-- `sync`: `S` exists and both its content **and permission bits** equal `D`'s,
-  recursively for directories. Content equality is a BLAKE3 digest (file size is
-  a fast pre-filter); permission bits (Unix mode `& 0o7777`) are folded into the
-  digest, so a mode-only change counts as drift. The executor preserves
-  permission bits when copying (files and directories).
+- `sync`: by default a fast **size + mtime + permission-bits** quick-check per
+  file (rsync's default), recursing over a directory's entries. mtime is
+  **preserved on copy**, so the check is stable across runs. `--checksum` forces
+  an exact BLAKE3 content compare instead; `--modify-window <SECONDS>` widens the
+  mtime tolerance for coarse-granularity filesystems (default 0 = exact). A
+  mode-only change counts as drift. Symlinks inside a synced tree are compared
+  **as symlinks** (by target string), never followed — consistent with the
+  executor, which recreates them verbatim; a dangling link is handled gracefully.
 
 Permission bits are part of identity only for `sync` (copy) mode, where both
-sides are independent real files. In `symlink`/`hardlink` mode the real file
-lives in `store` and keeps its own mode; the relink decision for an
-already-matching live file compares content only (the live file is about to
-become a link, so its mode is discarded).
+sides are independent real files. In `symlink` mode the real file lives in
+`store` and keeps its own mode; the relink decision for an already-matching live
+file compares content only (the live file is about to become a link, so its mode
+is discarded).
+
+### sync mode (incremental copy)
+
+`sync`-mode entries are diffed **in the pure planner**, which emits per-file
+`Copy`/`Backup`/`Remove` ops — so `--dry-run`, `status`, and the
+delete-confirmation gate all see the real per-file work. For a directory the
+planner walks source against destination:
+
+- **source file absent in destination** → `Copy` (a pure add; emitted even under
+  `conflict = skip`, since it overwrites nothing).
+- **present on both, equal** (quick-check or `--checksum`) → nothing.
+- **present on both, differs** → the `conflict` policy: `skip` leaves it and marks
+  the entry as carrying drift; `backup` backs up then copies; `replace` removes
+  then copies.
+- **destination-only entry**, and only when `mirror` is on → pruned per
+  `conflict`: `skip` leaves it (drift), `backup` renames it to `.bak`, `replace`
+  deletes it. `sync` prunes the `store` side, `deploy` the `live` side.
+
+Copy ops are emitted before prune ops for readable output. symify's own artifacts
+(`*.bak`, `*.symify-tmp.*`) are **invisible** to the walk on both sides — never
+copied as a source add, never pruned as extraneous — so backups don't churn and a
+second run is idempotent.
+
+**Partial apply + drift.** When an entry both applies changes (adds, resolved
+conflicts) **and** leaves an unresolved `skip`-difference, the planner returns an
+*applied-with-drift* action: the work runs, but the entry is reported as drift
+(exit 1) so a follow-up run isn't falsely all-clean. This mirrors rsync's
+`--ignore-existing` (copy new, leave existing) but adds the drift reporting rsync
+lacks.
+
+**Atomic, mtime-preserving copy.** The executor copies each file to a temp beside
+the destination (`.<name>.symify-tmp.<pid>.<n>`), sets its permission bits, sets
+its modification time to match the source, then `rename`s over the destination —
+a same-filesystem atomic swap. Readers and crashes never observe a half-written
+file; preserved mtime keeps the quick-check stable.
+
+`--delete` is a per-run override that forces `mirror` on for the selected mappings
+before planning (equivalent to setting `mirror = true` in config), so the planner
+reads a single source of truth. A mirror prune that would recursively delete a
+non-empty directory still passes through the unrecoverable-delete confirmation
+gate; bulk single-file prunes are not separately prompted — the opt-in `--delete`
+flag is the safety boundary, and pruned paths are listed in the output.
 
 ## CLI surface
 
@@ -263,9 +320,9 @@ become a link, so its mode is discarded).
 symify add    <path>   [-m MAP] [--store-path P] [-c FILE]... [--force] [--dry-run] [-y] [--json]
 symify remove <path>   [-m MAP] [-c FILE]... [--no-restore] [--dry-run] [--json]   (alias: rm)
 symify list            [-m MAP]... [-c FILE]... [--entries] [--json]               (alias: ls)
-symify sync            [-m MAP]... [-c FILE]... [--dry-run] [-y] [--json]
-symify deploy          [-m MAP]... [-c FILE]... [--dry-run] [-y] [--json]
-symify status          [-m MAP]... [-c FILE]... [--json]
+symify sync            [-m MAP]... [-c FILE]... [--dry-run] [-y] [--delete] [--checksum] [--modify-window N] [--json]
+symify deploy          [-m MAP]... [-c FILE]... [--dry-run] [-y] [--delete] [--checksum] [--modify-window N] [--json]
+symify status          [-m MAP]... [-c FILE]... [--checksum] [--modify-window N] [--json]
 
 Global: --allow-root  (permit mutating verbs to run as root; refused otherwise)
 ```
@@ -319,10 +376,11 @@ entries failed, or config/IO error).
 
 Read-only, direction-neutral. Per entry it reports a state label:
 
-- `symlink`/`hardlink`: `ok`, or specific drift (`missing`, `wrong-target`,
+- `symlink`: `ok`, or specific drift (`missing`, `wrong-target`,
   `unadopted` — `S` is a real file, etc.).
-- `sync` (copy): `in-sync` (hashes equal), `differs`, `live-only`, `store-only`
-  — without claiming which direction you should run.
+- `sync` (copy): `ok` (quick-check or `--checksum` equal), `differs`,
+  `live-missing`, `store-missing` — without claiming which direction you should
+  run.
 
 ## Rust crate layout
 
@@ -340,14 +398,17 @@ without touching the planner.
 |----------|----------------|
 | `config` | Source discovery, merge order, TOML parse, `~`/env expansion, apply `[settings]` defaults into each mapping; auto-init; mapping selection. |
 | `edit`   | Format-preserving config edits (`toml_edit`) for `add`/`remove`. |
-| `model`  | Config types **generated** from the JSON Schema (see [Schema codegen](#config-schema-codegen)); plus `Mode { Symlink, Hardlink, Sync }` and `Conflict { Skip, Replace, Backup }`. |
+| `model`  | Config types **generated** from the JSON Schema (see [Schema codegen](#config-schema-codegen)); plus `Mode { Symlink, Sync }`, `Conflict { Skip, Replace, Backup }`, and the `mirror` boolean. |
 | `plan`   | Pure planner. Resolves the merged config + FS state into an ordered `Vec<Action>` per verb. No mutation. |
 | `fs`     | Executor + the platform abstraction for link/copy/move/backup. Apply `Action`s. |
 | `status` | Derive per-entry status labels from the plan. |
 | `error`  | Error type (`thiserror`). |
 
-`Action` variants (illustrative): `Adopt`, `CreateSymlink`, `CreateHardlink`,
-`Copy`, `Backup`, `Replace`, `Skip`, `AlreadyOk`, `Conflict`, `Disabled`.
+`Action` variants (illustrative): `AlreadyOk`, `Disabled`, `Skip`, `Conflict`,
+`Failed`, `Apply { kind, ops }`, and `ApplyDrift { kind, ops }` (applied, but a
+residual `skip`-difference remains). `kind` is one of `Adopt`/`Relink`/`Link`/
+`Push`/`Pull`; `ops` are primitive `FsOp`s (`Symlink`, `Copy`, `Move`, `Backup`,
+`Remove`).
 
 ### `crates/app/symify` (binary)
 
@@ -433,9 +494,9 @@ packages/
 
 Ships **Unix only**: Linux `x86_64`/`aarch64` (gnu) + macOS `x86_64`/`aarch64`.
 **Windows is designed-for but unshipped** — adding it is a build-target +
-symlink-privilege task (Developer Mode / elevation, `hardlink`/`sync` fallback),
-not a rewrite. A static **musl** Linux build can be added if the npm story needs
-it.
+symlink-privilege task (Developer Mode / elevation, with `sync`-mode copy as the
+no-privilege fallback), not a rewrite. A static **musl** Linux build can be added
+if the npm story needs it.
 
 ### CI/CD (`.github/workflows`, currently absent)
 
@@ -458,9 +519,9 @@ under `cargo-nextest` (`npm test`).
   matters most.
 - **Executor / library integration.** Lay down a `live` + `store` fixture tree,
   run `sync`/`deploy`/`status` through the `symify-core` API, and assert the
-  resulting filesystem: link exists and **resolves** to the right target, inode
-  shared for hardlinks, content hash matches for `sync`, `.bak` created on
-  conflict.
+  resulting filesystem: link exists and **resolves** to the right target,
+  content matches for `sync` (and mtime is preserved), `.bak` created on
+  conflict, only changed files recopied, `--delete` prunes.
 - **CLI end-to-end.** Invoke the real binary against temp trees; assert human
   output, `--json` output, and exit codes (`0`/`1`/`2`).
 - **Config / merge (table-driven).** TOML strings in, merged config out — deep
@@ -485,8 +546,8 @@ under `cargo-nextest` (`npm test`).
 - **Idempotency invariant.** A dedicated test runs each verb twice and asserts
   the second run is all-`AlreadyOk` with exit `0` — catches a class of planner
   bugs.
-- **Partial-failure.** Drive a real failure (e.g. a directory entry in `hardlink`
-  mode) and assert other entries still apply and the run exits `2` — exercising
+- **Partial-failure.** Drive a real failure (e.g. an entry refused by the safety
+  guard) and assert other entries still apply and the run exits `2` — exercising
   continue-on-error without mocking.
 
 ### CI platforms

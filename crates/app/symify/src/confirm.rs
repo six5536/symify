@@ -33,20 +33,22 @@ struct PendingDelete {
 fn destructive_deletes(planned: &[Planned]) -> Vec<PendingDelete> {
     let mut out = Vec::new();
     for p in planned {
-        if let Action::Apply { kind, ops } = &p.action {
-            if *kind == ActionKind::Relink {
-                continue;
-            }
-            for op in ops {
-                if let FsOp::Remove(path) = op
-                    && fs::is_nonempty_dir(path)
-                {
-                    out.push(PendingDelete {
-                        path: path.clone(),
-                        mapping: p.mapping.clone(),
-                        key: p.key.clone(),
-                    });
-                }
+        let (kind, ops) = match &p.action {
+            Action::Apply { kind, ops } | Action::ApplyDrift { kind, ops } => (kind, ops),
+            _ => continue,
+        };
+        if *kind == ActionKind::Relink {
+            continue;
+        }
+        for op in ops {
+            if let FsOp::Remove(path) = op
+                && fs::is_nonempty_dir(path)
+            {
+                out.push(PendingDelete {
+                    path: path.clone(),
+                    mapping: p.mapping.clone(),
+                    key: p.key.clone(),
+                });
             }
         }
     }

@@ -12,7 +12,7 @@ use symify_core::clock::SystemClock;
 use symify_core::config::{ResolvedConfig, ResolvedMapping};
 use symify_core::model::{LinkValue, Mode};
 use symify_core::{
-    Action, Error, FsOp, Verb, config, edit, entry_paths, execute, fs, plan, status,
+    Action, Error, FsOp, RunOptions, Verb, config, edit, entry_paths, execute, fs, plan, status,
 };
 
 use crate::cli::{AddArgs, Cli, Command, ListArgs, QueryArgs, RemoveArgs, RunArgs};
@@ -93,8 +93,19 @@ fn load_set(config: &[PathBuf]) -> symify_core::Result<(Vec<PathBuf>, ResolvedCo
 
 fn run_verb(verb: Verb, args: RunArgs) -> symify_core::Result<u8> {
     let (_, resolved) = load_set(&args.config)?;
-    let cfg = config::select(resolved, &args.mapping)?;
-    let planned = plan(&cfg, verb)?;
+    let mut cfg = config::select(resolved, &args.mapping)?;
+    // `--delete` is a per-run config override: force mirror on for the selected
+    // mappings before planning, so the planner reads only ResolvedMapping.mirror.
+    if args.delete {
+        for m in &mut cfg.mappings {
+            m.mirror = true;
+        }
+    }
+    let opts = RunOptions {
+        checksum: args.checksum,
+        modify_window: args.modify_window,
+    };
+    let planned = plan(&cfg, verb, opts)?;
     if let confirm::Gate::Aborted = confirm::gate(&planned, args.yes, args.json, args.dry_run)? {
         eprintln!("Aborted.");
         return Ok(output::EXIT_OK);
@@ -112,7 +123,11 @@ fn run_verb(verb: Verb, args: RunArgs) -> symify_core::Result<u8> {
 fn run_status(args: QueryArgs) -> symify_core::Result<u8> {
     let (_, resolved) = load_set(&args.config)?;
     let cfg = config::select(resolved, &args.mapping)?;
-    Ok(output::render_status(&status(&cfg)?, args.json))
+    let opts = RunOptions {
+        checksum: args.checksum,
+        modify_window: args.modify_window,
+    };
+    Ok(output::render_status(&status(&cfg, opts)?, args.json))
 }
 
 fn run_list(args: ListArgs) -> symify_core::Result<u8> {
@@ -185,7 +200,7 @@ fn run_add(args: AddArgs) -> symify_core::Result<u8> {
             ..m2.clone()
         }],
     };
-    let planned = plan(&single, Verb::Sync)?;
+    let planned = plan(&single, Verb::Sync, RunOptions::default())?;
 
     // A guard failure (protected root, out-of-root directory, …) must abort
     // before we touch the config — don't record a link we'll refuse to adopt.
@@ -302,7 +317,6 @@ fn would_restore(s: &Path, d: &Path, mode: Mode) -> symify_core::Result<bool> {
     }
     Ok(match mode {
         Mode::Symlink => fs::symlink_points_to(s, d)?,
-        Mode::Hardlink => fs::same_inode(s, d)?,
         Mode::Sync => false,
     })
 }

@@ -7,7 +7,7 @@ use symify_core::clock::FixedClock;
 use symify_core::config::{ResolvedConfig, ResolvedMapping};
 use symify_core::model::{Conflict, LinkValue, Mode};
 use symify_core::status::StatusLabel;
-use symify_core::{Outcome, Verb, execute, plan, status};
+use symify_core::{Outcome, RunOptions, Verb, execute, plan, status};
 
 struct Fx {
     _tmp: tempfile::TempDir,
@@ -46,6 +46,7 @@ impl Fx {
                 store: self.store.clone(),
                 mode,
                 conflict,
+                mirror: false,
                 links: links
                     .iter()
                     .map(|(k, v)| (k.to_string(), v.clone()))
@@ -60,7 +61,7 @@ fn clock() -> FixedClock {
 }
 
 fn run(cfg: &ResolvedConfig, verb: Verb) -> Vec<Outcome> {
-    let planned = plan(cfg, verb).unwrap();
+    let planned = plan(cfg, verb, RunOptions::default()).unwrap();
     execute(&planned, &clock(), false)
 }
 
@@ -86,7 +87,7 @@ fn sync_adopts_then_status_is_ok_and_idempotent() {
     assert_eq!(symlink_target(&fx.lp(".bashrc")), fx.sp(".bashrc"));
 
     // status reports Ok.
-    let st = status(&cfg).unwrap();
+    let st = status(&cfg, RunOptions::default()).unwrap();
     assert_eq!(st[0].label, StatusLabel::Ok);
 
     // Idempotent: a second sync is a no-op.
@@ -161,7 +162,7 @@ fn dry_run_mutates_nothing() {
         &[(".bashrc", LinkValue::Boolean(true))],
     );
 
-    let planned = plan(&cfg, Verb::Sync).unwrap();
+    let planned = plan(&cfg, Verb::Sync, RunOptions::default()).unwrap();
     let out = execute(&planned, &clock(), true); // dry_run
     assert!(matches!(out[0], Outcome::Applied(_)));
 
@@ -173,30 +174,29 @@ fn dry_run_mutates_nothing() {
 #[test]
 fn continue_on_error_processes_all_entries() {
     let fx = Fx::new();
-    // A directory in hardlink mode fails; a sibling file still succeeds.
-    std::fs::create_dir_all(fx.lp("d/inner")).unwrap();
-    fx.write(&fx.lp("d/inner/file"), b"x");
+    // An entry resolving to the live root itself is refused by the safety guard;
+    // a sibling file still succeeds. ("" sorts before "f".)
     fx.write(&fx.lp("f"), b"file");
     let cfg = fx.cfg(
-        Mode::Hardlink,
+        Mode::Symlink,
         Conflict::Backup,
         &[
-            ("d", LinkValue::Boolean(true)),
+            ("", LinkValue::Boolean(true)),
             ("f", LinkValue::Boolean(true)),
         ],
     );
 
-    let out = run(&cfg, Verb::Sync); // links sorted: d, f
+    let out = run(&cfg, Verb::Sync); // links sorted: "", f
     assert!(
         matches!(out[0], Outcome::Failed(_)),
-        "dir+hardlink should fail"
+        "live-root entry should fail the guard"
     );
     assert!(
         matches!(out[1], Outcome::Applied(_)),
         "file should still apply"
     );
 
-    // The file was adopted and hardlinked despite the earlier failure.
+    // The file was adopted despite the earlier failure.
     assert_eq!(std::fs::read(fx.sp("f")).unwrap(), b"file");
 }
 
@@ -220,10 +220,16 @@ fn sync_copy_mode_preserves_and_tracks_permission_bits() {
 
     // Change only the live file's mode → detected as drift and re-synced.
     std::fs::set_permissions(fx.lp("script.sh"), std::fs::Permissions::from_mode(0o644)).unwrap();
-    assert_eq!(status(&cfg).unwrap()[0].label, StatusLabel::Differs);
+    assert_eq!(
+        status(&cfg, RunOptions::default()).unwrap()[0].label,
+        StatusLabel::Differs
+    );
     run(&cfg, Verb::Sync);
     assert_eq!(mode(&fx.sp("script.sh")), 0o644);
-    assert_eq!(status(&cfg).unwrap()[0].label, StatusLabel::Ok);
+    assert_eq!(
+        status(&cfg, RunOptions::default()).unwrap()[0].label,
+        StatusLabel::Ok
+    );
 }
 
 #[test]
@@ -250,5 +256,8 @@ fn sync_copy_mode_roundtrips_directory() {
     );
 
     // Now in sync.
-    assert_eq!(status(&cfg).unwrap()[0].label, StatusLabel::Ok);
+    assert_eq!(
+        status(&cfg, RunOptions::default()).unwrap()[0].label,
+        StatusLabel::Ok
+    );
 }

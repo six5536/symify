@@ -18,13 +18,18 @@
       "title": "Mode",
       "description": "Link mechanism.",
       "type": "string",
-      "enum": ["symlink", "hardlink", "sync"]
+      "enum": ["symlink", "sync"]
     },
     "Conflict": {
       "title": "Conflict",
       "description": "What to do when the side being written already exists and differs.",
       "type": "string",
       "enum": ["skip", "replace", "backup"]
+    },
+    "Mirror": {
+      "title": "Mirror",
+      "description": "When true, sync mode prunes files on the destination side that no longer exist in the source (the `--delete` axis). Default false (additive: only add/update, never prune).",
+      "type": "boolean"
     },
     "LinkValue": {
       "title": "LinkValue",
@@ -46,7 +51,8 @@
           "description": "Backing repository that holds the real content (e.g. \"~/dotfiles\")."
         },
         "mode": { "$ref": "#/$defs/Mode" },
-        "conflict": { "$ref": "#/$defs/Conflict" }
+        "conflict": { "$ref": "#/$defs/Conflict" },
+        "mirror": { "$ref": "#/$defs/Mirror" }
       }
     },
     "Mapping": {
@@ -59,6 +65,7 @@
         "store": { "type": "string" },
         "mode": { "$ref": "#/$defs/Mode" },
         "conflict": { "$ref": "#/$defs/Conflict" },
+        "mirror": { "$ref": "#/$defs/Mirror" },
         "links": {
           "type": "object",
           "description": "Map of live-relative (or absolute) key -> link value.",

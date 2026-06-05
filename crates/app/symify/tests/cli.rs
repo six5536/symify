@@ -47,6 +47,32 @@ impl Fx {
             config,
         }
     }
+    /// A single `mode = "sync"` (copy) mapping with the given conflict policy
+    /// and link lines.
+    fn sync(conflict: &str, links: &[&str]) -> Self {
+        let tmp = tempfile::tempdir().unwrap();
+        let live = tmp.path().join("live");
+        let store = tmp.path().join("store");
+        std::fs::create_dir_all(&live).unwrap();
+        std::fs::create_dir_all(&store).unwrap();
+        let config = tmp.path().join("symify.toml");
+        std::fs::write(
+            &config,
+            format!(
+                "[settings]\nlive = \"{}\"\nstore = \"{}\"\nmode = \"sync\"\nconflict = \"{conflict}\"\n\n[mappings.dotfiles.links]\n{}\n",
+                live.display(),
+                store.display(),
+                links.join("\n"),
+            ),
+        )
+        .unwrap();
+        Fx {
+            _tmp: tmp,
+            live,
+            store,
+            config,
+        }
+    }
     fn lp(&self, r: &str) -> PathBuf {
         self.live.join(r)
     }
@@ -383,4 +409,127 @@ fn auto_init_with_json_keeps_stdout_clean() {
     let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
     serde_json::from_str::<serde_json::Value>(&stdout)
         .unwrap_or_else(|e| panic!("stdout not clean JSON ({e}): {stdout}"));
+}
+
+// ----- sync (copy) mode: incremental, mirror, checksum ------------------
+
+#[test]
+fn sync_copy_touches_only_changed_files() {
+    let fx = Fx::sync("backup", &["\"conf\" = true"]);
+    fx.write(&fx.lp("conf/a"), b"a");
+    fx.write(&fx.lp("conf/b"), b"b");
+
+    // First sync captures the whole dir; second is a clean no-op (idempotent,
+    // mtime preserved).
+    fx.cmd("sync").assert().success();
+    let out = fx.cmd("sync").arg("--json").assert().success();
+    let doc: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.get_output().stdout)).unwrap();
+    assert_eq!(doc["summary"]["ok"], 1, "second sync should be all-ok");
+
+    // Change one file; only it is copied.
+    let before_a = std::fs::metadata(fx.sp("conf/a"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    fx.write(&fx.lp("conf/b"), b"b-bigger");
+    let out = fx.cmd("sync").arg("--json").assert().success();
+    let doc: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.get_output().stdout)).unwrap();
+    assert_eq!(doc["entries"][0]["copied"], 1, "only one file copied");
+    assert_eq!(std::fs::read(fx.sp("conf/b")).unwrap(), b"b-bigger");
+    // The unchanged file was not rewritten (its mtime is untouched).
+    let after_a = std::fs::metadata(fx.sp("conf/a"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert_eq!(before_a, after_a, "unchanged file must not be recopied");
+}
+
+#[test]
+fn sync_delete_prunes_only_with_flag() {
+    let fx = Fx::sync("replace", &["\"conf\" = true"]);
+    fx.write(&fx.lp("conf/keep"), b"k");
+    fx.cmd("sync").assert().success();
+    // Create a store-only orphan (no live counterpart).
+    fx.write(&fx.sp("conf/orphan"), b"o");
+
+    // Default: orphan is left untouched.
+    fx.cmd("sync").assert().success();
+    assert!(
+        fx.sp("conf/orphan").exists(),
+        "orphan kept without --delete"
+    );
+
+    // --delete: orphan is pruned and listed.
+    let out = fx.cmd("sync").arg("--delete").assert().success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(
+        !fx.sp("conf/orphan").exists(),
+        "orphan pruned with --delete"
+    );
+    assert!(stdout.contains("-1"), "prune count shown: {stdout}");
+}
+
+#[test]
+fn sync_checksum_skips_recopy_on_mtime_only_change() {
+    let fx = Fx::sync("replace", &["\"f\" = true"]);
+    fx.write(&fx.lp("f"), b"content");
+    fx.cmd("sync").assert().success();
+
+    // Bump only the live mtime (same content).
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+    let h = std::fs::OpenOptions::new()
+        .write(true)
+        .open(fx.lp("f"))
+        .unwrap();
+    h.set_times(std::fs::FileTimes::new().set_modified(later))
+        .unwrap();
+
+    // Default quick-check sees a difference and re-copies.
+    let out = fx.cmd("sync").arg("--json").assert().success();
+    let doc: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.get_output().stdout)).unwrap();
+    assert_eq!(doc["summary"]["changed"], 1);
+
+    // Re-bump and use --checksum: content identical → no copy.
+    let later2 = std::time::SystemTime::now() + std::time::Duration::from_secs(10);
+    let h = std::fs::OpenOptions::new()
+        .write(true)
+        .open(fx.lp("f"))
+        .unwrap();
+    h.set_times(std::fs::FileTimes::new().set_modified(later2))
+        .unwrap();
+    let out = fx
+        .cmd("sync")
+        .arg("--checksum")
+        .arg("--json")
+        .assert()
+        .success();
+    let doc: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.get_output().stdout)).unwrap();
+    assert_eq!(
+        doc["summary"]["ok"], 1,
+        "checksum recognises identical content"
+    );
+}
+
+#[test]
+fn sync_skip_partial_apply_reports_drift_exit_1() {
+    let fx = Fx::sync("skip", &["\"conf\" = true"]);
+    fx.write(&fx.lp("conf/a"), b"a");
+    fx.cmd("sync").assert().success();
+
+    // One new file (additive) + one diverging file (skip → drift).
+    fx.write(&fx.lp("conf/new"), b"new");
+    fx.write(&fx.sp("conf/a"), b"store-diverged-bigger");
+    let out = fx.cmd("sync").arg("--json").assert().code(1); // drift exit
+    let doc: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.get_output().stdout)).unwrap();
+    assert_eq!(doc["entries"][0]["drift"], true);
+    assert_eq!(doc["entries"][0]["copied"], 1, "new file still copied");
+    assert!(
+        fx.sp("conf/new").exists(),
+        "additive copy applied under skip"
+    );
 }

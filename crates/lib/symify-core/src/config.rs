@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::model::{Config, Conflict, LinkValue, Mapping, Mode, Settings};
-use crate::model::{DEFAULT_CONFLICT, DEFAULT_MODE};
+use crate::model::{DEFAULT_CONFLICT, DEFAULT_MIRROR, DEFAULT_MODE};
 
 /// A fully resolved configuration: every mapping has concrete absolute roots and
 /// effective `mode`/`conflict`, ready for planning.
@@ -33,6 +33,8 @@ pub struct ResolvedMapping {
     pub mode: Mode,
     /// Effective conflict policy.
     pub conflict: Conflict,
+    /// Effective mirror policy (prune destination-only files in `sync` mode).
+    pub mirror: bool,
     /// Link entries, sorted by key for deterministic output.
     pub links: Vec<(String, LinkValue)>,
 }
@@ -169,7 +171,7 @@ pub fn render_starter(live: &str, store: &str) -> String {
 [settings]
 live = "{live}"          # where your files are used
 store = "{store}"        # where the real content is kept (commit this to git)
-mode = "symlink"         # symlink | hardlink | sync (sync = independent copy)
+mode = "symlink"         # symlink | sync (sync = independent copy)
 conflict = "backup"      # skip | replace (overwrite, no backup) | backup (.<timestamp>.bak)
 
 # Each entry maps a path (relative to `live`) to how it lives in `store`:
@@ -225,6 +227,7 @@ fn merge_settings(base: Option<Settings>, overlay: Option<Settings>) -> Option<S
             store: o.store.or(b.store),
             mode: o.mode.or(b.mode),
             conflict: o.conflict.or(b.conflict),
+            mirror: o.mirror.or(b.mirror),
         }),
     }
 }
@@ -252,6 +255,7 @@ fn merge_mapping(base: Mapping, overlay: Mapping) -> Mapping {
         store: overlay.store.or(base.store),
         mode: overlay.mode.or(base.mode),
         conflict: overlay.conflict.or(base.conflict),
+        mirror: overlay.mirror.or(base.mirror),
         links,
     }
 }
@@ -281,6 +285,12 @@ pub fn resolve(config: Config) -> Result<ResolvedConfig> {
 
         let mode = m.mode.or(settings.mode).unwrap_or(DEFAULT_MODE);
         let conflict = m.conflict.or(settings.conflict).unwrap_or(DEFAULT_CONFLICT);
+        let mirror = m
+            .mirror
+            .clone()
+            .or_else(|| settings.mirror.clone())
+            .map(bool::from)
+            .unwrap_or(DEFAULT_MIRROR);
 
         let mut links: Vec<(String, LinkValue)> = m
             .links
@@ -304,6 +314,7 @@ pub fn resolve(config: Config) -> Result<ResolvedConfig> {
             store,
             mode,
             conflict,
+            mirror,
             links,
         });
     }
@@ -412,13 +423,13 @@ mod tests {
             store = "~/dotfiles"
             mode = "symlink""#,
             r#"[settings]
-            mode = "hardlink"
+            mode = "sync"
             conflict = "skip""#,
         ]);
         let s = merged.settings.unwrap();
         assert_eq!(s.live.as_deref(), Some("~")); // kept from doc 1
         assert_eq!(s.store.as_deref(), Some("~/dotfiles")); // kept from doc 1
-        assert_eq!(s.mode, Some(Mode::Hardlink)); // overridden by doc 2
+        assert_eq!(s.mode, Some(Mode::Sync)); // overridden by doc 2
         assert_eq!(s.conflict, Some(Conflict::Skip)); // added by doc 2
     }
 
@@ -428,14 +439,14 @@ mod tests {
             r#"[mappings.a.links]
             x = true"#,
             r#"[mappings.a]
-            mode = "hardlink"
+            mode = "sync"
             [mappings.a.links]
             y = ""
             [mappings.b.links]
             z = true"#,
         ]);
         let a = &merged.mappings["a"];
-        assert_eq!(a.mode, Some(Mode::Hardlink)); // override applied
+        assert_eq!(a.mode, Some(Mode::Sync)); // override applied
         assert!(a.links.contains_key("x")); // combined
         assert!(a.links.contains_key("y"));
         assert!(merged.mappings.contains_key("b")); // distinct name accumulates
@@ -475,12 +486,12 @@ mod tests {
             store = "/store"
             mode = "sync"
             [mappings.a]
-            mode = "hardlink"
+            mode = "symlink"
             [mappings.a.links]
             x = true"#);
         let r = resolve(c).unwrap();
         assert_eq!(r.mappings[0].live, PathBuf::from("/live")); // from settings
-        assert_eq!(r.mappings[0].mode, Mode::Hardlink); // mapping wins over settings
+        assert_eq!(r.mappings[0].mode, Mode::Symlink); // mapping wins over settings
     }
 
     #[test]

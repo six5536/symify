@@ -15,5 +15,7 @@ pub mod plan;
 pub mod status;
 
 pub use error::{Error, Result};
-pub use plan::{Action, ActionKind, FsOp, Outcome, Planned, Verb, entry_paths, execute, plan};
+pub use plan::{
+    Action, ActionKind, FsOp, Outcome, Planned, RunOptions, Verb, entry_paths, execute, plan,
+};
 pub use status::{StatusEntry, StatusLabel, status};

@@ -7,6 +7,7 @@ use crate::Result;
 use crate::config::ResolvedConfig;
 use crate::fs::{self, NodeKind};
 use crate::model::{LinkKind, Mode};
+use crate::plan::RunOptions;
 
 /// Direction-neutral state of a single entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,7 +28,8 @@ pub enum StatusLabel {
     Missing,
     /// Copy mode: both sides exist but differ.
     Differs,
-    /// The entry is in an unusable state (e.g. a directory in hardlink mode).
+    /// The entry is in an unusable state (e.g. it resolves to a protected root
+    /// or a directory outside the live root).
     Failed(String),
 }
 
@@ -61,7 +63,7 @@ pub struct StatusEntry {
 }
 
 /// Report the status of every entry in the resolved config.
-pub fn status(config: &ResolvedConfig) -> Result<Vec<StatusEntry>> {
+pub fn status(config: &ResolvedConfig, opts: RunOptions) -> Result<Vec<StatusEntry>> {
     let mut out = Vec::new();
     for m in &config.mappings {
         for (key, value) in &m.links {
@@ -72,7 +74,7 @@ pub fn status(config: &ResolvedConfig) -> Result<Vec<StatusEntry>> {
             } else if let Some(reason) = crate::plan::guard_reason(m, &live, &store)? {
                 StatusLabel::Failed(reason)
             } else {
-                label_for(&live, &store, m.mode)?
+                label_for(&live, &store, m.mode, opts)?
             };
             out.push(StatusEntry {
                 mapping: m.name.clone(),
@@ -87,22 +89,13 @@ pub fn status(config: &ResolvedConfig) -> Result<Vec<StatusEntry>> {
     Ok(out)
 }
 
-fn label_for(s: &Path, d: &Path, mode: Mode) -> Result<StatusLabel> {
+fn label_for(s: &Path, d: &Path, mode: Mode, opts: RunOptions) -> Result<StatusLabel> {
     let s_state = fs::inspect(s)?;
     let d_state = fs::inspect(d)?;
 
     match mode {
-        Mode::Symlink | Mode::Hardlink => {
-            if mode == Mode::Hardlink && (s_state == NodeKind::Dir || d_state == NodeKind::Dir) {
-                return Ok(StatusLabel::Failed(
-                    "hardlink mode cannot link a directory".into(),
-                ));
-            }
-
-            let correct = match mode {
-                Mode::Hardlink => fs::same_inode(s, d)?,
-                _ => fs::symlink_points_to(s, d)? && !d_state.is_missing(),
-            };
+        Mode::Symlink => {
+            let correct = fs::symlink_points_to(s, d)? && !d_state.is_missing();
             if correct {
                 return Ok(StatusLabel::Ok);
             }
@@ -120,7 +113,7 @@ fn label_for(s: &Path, d: &Path, mode: Mode) -> Result<StatusLabel> {
             (false, true) => StatusLabel::StoreMissing,
             (true, false) => StatusLabel::LiveMissing,
             (false, false) => {
-                if fs::synced_equal(s, d)? {
+                if opts.equal(s, d)? {
                     StatusLabel::Ok
                 } else {
                     StatusLabel::Differs
@@ -170,6 +163,7 @@ mod tests {
                     store: self.store.clone(),
                     mode,
                     conflict: Conflict::Backup,
+                    mirror: false,
                     links: links.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
                 }],
             }
@@ -179,7 +173,7 @@ mod tests {
         LinkValue::Boolean(true)
     }
     fn label(cfg: &ResolvedConfig) -> StatusLabel {
-        status(cfg).unwrap().remove(0).label
+        status(cfg, RunOptions::default()).unwrap().remove(0).label
     }
 
     #[test]
@@ -223,18 +217,29 @@ mod tests {
         );
     }
 
+    /// Set `dst`'s mtime equal to `src`'s, modelling a `sync` copy (which
+    /// preserves mtime) so the size+mtime quick-check sees the pair as in sync.
+    fn match_mtime(src: &Path, dst: &Path) {
+        let t = std::fs::metadata(src).unwrap().modified().unwrap();
+        let f = std::fs::OpenOptions::new().write(true).open(dst).unwrap();
+        f.set_times(std::fs::FileTimes::new().set_modified(t))
+            .unwrap();
+    }
+
     #[test]
     fn copy_states() {
         let fx = Fx::new();
         std::fs::write(fx.lp("a"), b"x").unwrap();
         std::fs::write(fx.sp("a"), b"x").unwrap();
+        match_mtime(&fx.lp("a"), &fx.sp("a")); // in-sync: same content, size, mtime
         assert_eq!(
             label(&fx.cfg(Mode::Sync, vec![("a", t())])),
             StatusLabel::Ok
         );
 
+        // Different sizes → the size+mtime quick-check reports a difference.
         std::fs::write(fx.lp("b"), b"one").unwrap();
-        std::fs::write(fx.sp("b"), b"two").unwrap();
+        std::fs::write(fx.sp("b"), b"a-longer-value").unwrap();
         assert_eq!(
             label(&fx.cfg(Mode::Sync, vec![("b", t())])),
             StatusLabel::Differs
@@ -248,16 +253,11 @@ mod tests {
     }
 
     #[test]
-    fn disabled_and_hardlink_dir() {
+    fn disabled_entry() {
         let fx = Fx::new();
         assert_eq!(
             label(&fx.cfg(Mode::Symlink, vec![("x", LinkValue::Boolean(false))])),
             StatusLabel::Disabled
         );
-        std::fs::create_dir_all(fx.sp("d")).unwrap();
-        assert!(matches!(
-            label(&fx.cfg(Mode::Hardlink, vec![("d", t())])),
-            StatusLabel::Failed(_)
-        ));
     }
 }

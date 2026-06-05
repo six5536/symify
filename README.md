@@ -1,9 +1,9 @@
 # symify
 
-symify keeps your files in sync with a backing repository, as symlinks,
-hardlinks, or copies. It's a dotfiles manager: the files you use day to day stay
-where programs expect them, while the real copies live in a repository you can
-keep under version control.
+symify keeps your files in sync with a backing repository, as symlinks or
+copies. It's a dotfiles manager: the files you use day to day stay where programs
+expect them, while the real copies live in a repository you can keep under
+version control.
 
 There are two locations:
 
@@ -59,14 +59,15 @@ symify deploy            # create links in ~ pointing at the store
 ## Configuration
 
 `[settings]` sets the defaults; each `[mappings.<name>]` can override `live`,
-`store`, `mode`, or `conflict`.
+`store`, `mode`, `conflict`, or `mirror`.
 
 ```toml
 [settings]
 live = "~"            # where links/copies appear
 store = "~/dotfiles"  # where the real content lives
-mode = "symlink"      # symlink | hardlink | sync (sync = independent copy)
+mode = "symlink"      # symlink | sync (sync = independent copy)
 conflict = "backup"   # skip | replace (overwrite, no backup) | backup (.<timestamp>.bak)
+mirror = false        # sync mode: prune store files with no live counterpart (the --delete axis)
 
 [mappings.dotfiles.links]
 ".config/fish/config.fish" = ""              # "" or true: mirror the key under store
@@ -101,6 +102,15 @@ For path resolution rules, the per-entry state machine, and the full design, see
 - `sync`/`deploy`/`add`/`remove` take `--dry-run`; every command takes `--json`
   and `-c <file>` (repeatable; replaces the usual config locations). There's no
   separate `init` — any command creates a default config if none exists.
+- In `sync` mode, `sync`/`deploy` copy only changed files (a size+mtime
+  quick-check, with mtime preserved on copy). Extra flags:
+  - `--delete` — prune destination files with no source counterpart (forces
+    `mirror` on for the run; off by default). Pruned paths are listed in the
+    output and under `--dry-run`.
+  - `--checksum` — compare file content exactly instead of by size+mtime.
+  - `--modify-window <SECONDS>` — treat mtimes within N seconds as equal, for
+    coarse-granularity filesystems (default 0 = exact). `status` accepts
+    `--checksum`/`--modify-window` too, so its report matches a run.
 
 Run `symify <command> --help` for the full reference and exit codes.
 

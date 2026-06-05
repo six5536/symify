@@ -10,7 +10,7 @@ use serde::Serialize;
 use symify_core::config::ResolvedConfig;
 use symify_core::model::Mode;
 use symify_core::status::{StatusEntry, StatusLabel};
-use symify_core::{ActionKind, Outcome, Planned, Verb, entry_paths};
+use symify_core::{Action, ActionKind, FsOp, Outcome, Planned, Verb, entry_paths};
 
 /// Exit code: success / clean.
 pub const EXIT_OK: u8 = 0;
@@ -22,7 +22,6 @@ pub const EXIT_FAILURE: u8 = 2;
 fn mode_str(mode: Mode) -> &'static str {
     match mode {
         Mode::Symlink => "symlink",
-        Mode::Hardlink => "hardlink",
         Mode::Sync => "sync",
     }
 }
@@ -66,6 +65,14 @@ struct RunEntryJson {
     action: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     detail: Option<String>,
+    /// Files copied (`sync` mode).
+    copied: usize,
+    /// Files backed up before overwrite/prune.
+    backed_up: usize,
+    /// Files/dirs removed (overwrite or mirror prune).
+    pruned: usize,
+    /// A residual `skip`-difference remains after applying.
+    drift: bool,
 }
 
 #[derive(Default, Serialize)]
@@ -90,7 +97,14 @@ pub fn render_run(
     let mut entries = Vec::with_capacity(planned.len());
 
     for (p, o) in planned.iter().zip(outcomes) {
-        let (outcome, action, detail) = classify(o, &mut summary);
+        let (outcome, action, mut detail) = classify(o, &mut summary);
+        let (copied, backed_up, pruned) = count_ops(&p.action);
+        let drift = matches!(o, Outcome::AppliedDrift(_));
+        // For applied entries, surface the per-file counts (and prune visibility)
+        // instead of a bare action word.
+        if matches!(o, Outcome::Applied(_) | Outcome::AppliedDrift(_)) {
+            detail = count_detail(copied, backed_up, pruned, drift);
+        }
         entries.push(RunEntryJson {
             mapping: p.mapping.clone(),
             key: p.key.clone(),
@@ -100,6 +114,10 @@ pub fn render_run(
             outcome,
             action,
             detail,
+            copied,
+            backed_up,
+            pruned,
+            drift,
         });
     }
 
@@ -141,6 +159,13 @@ fn classify(
             s.changed += 1;
             ("applied", Some(action_word(*kind)), None)
         }
+        Outcome::AppliedDrift(kind) => {
+            // Both a change and drift: counts toward changed and conflicts so the
+            // run exits with the drift code while still reporting the work done.
+            s.changed += 1;
+            s.conflicts += 1;
+            ("applied-drift", Some(action_word(*kind)), None)
+        }
         Outcome::AlreadyOk => {
             s.ok += 1;
             ("ok", None, None)
@@ -167,12 +192,58 @@ fn classify(
 fn symbol(outcome: &str) -> char {
     match outcome {
         "applied" => '+',
+        "applied-drift" => '!',
         "ok" => '=',
         "disabled" => '·',
         "skipped" => '-',
         "conflict" => '!',
         "failed" => 'x',
         _ => '?',
+    }
+}
+
+/// Tally an entry's ops into (copied, backed_up, pruned) for reporting.
+fn count_ops(action: &Action) -> (usize, usize, usize) {
+    let ops = match action {
+        Action::Apply { ops, .. } | Action::ApplyDrift { ops, .. } => ops.as_slice(),
+        _ => &[][..],
+    };
+    let (mut copied, mut backed_up, mut pruned) = (0, 0, 0);
+    for op in ops {
+        match op {
+            FsOp::Copy { .. } => copied += 1,
+            FsOp::Backup(_) => backed_up += 1,
+            FsOp::Remove(_) => pruned += 1,
+            _ => {}
+        }
+    }
+    (copied, backed_up, pruned)
+}
+
+/// Build the human detail string for an applied entry, e.g. `+2 ~1 -3, drift`.
+/// Returns `None` when there is nothing noteworthy (e.g. a plain link adopt).
+fn count_detail(copied: usize, backed_up: usize, pruned: usize, drift: bool) -> Option<String> {
+    let mut parts = Vec::new();
+    if copied > 0 {
+        parts.push(format!("+{copied}"));
+    }
+    if backed_up > 0 {
+        parts.push(format!("~{backed_up}"));
+    }
+    if pruned > 0 {
+        parts.push(format!("-{pruned}"));
+    }
+    let mut detail = parts.join(" ");
+    if drift {
+        if !detail.is_empty() {
+            detail.push_str(", ");
+        }
+        detail.push_str("drift");
+    }
+    if detail.is_empty() {
+        None
+    } else {
+        Some(detail)
     }
 }
 
@@ -312,7 +383,7 @@ pub fn render_status(entries: &[StatusEntry], json: bool) -> u8 {
 /// Map a single adopt/restore outcome to (symbol, word) and an exit code.
 fn outcome_word(o: &Outcome) -> &'static str {
     match o {
-        Outcome::Applied(k) => action_word(*k),
+        Outcome::Applied(k) | Outcome::AppliedDrift(k) => action_word(*k),
         Outcome::AlreadyOk => "ok",
         Outcome::Disabled => "disabled",
         Outcome::Skipped(_) => "skipped",
@@ -324,7 +395,7 @@ fn outcome_word(o: &Outcome) -> &'static str {
 fn outcome_exit(o: &Outcome) -> u8 {
     match o {
         Outcome::Failed(_) => EXIT_FAILURE,
-        Outcome::Conflict => EXIT_DRIFT,
+        Outcome::Conflict | Outcome::AppliedDrift(_) => EXIT_DRIFT,
         _ => EXIT_OK,
     }
 }
@@ -375,6 +446,7 @@ pub fn render_add(
         let done = if dry_run { "would adopt" } else { "adopted" };
         match adopt {
             Outcome::Applied(_) => println!("  {done}"),
+            Outcome::AppliedDrift(_) => println!("  {done} (drift remains — resolve, then sync)"),
             Outcome::AlreadyOk => println!("  already in sync"),
             Outcome::Conflict => println!("  conflict — not adopted (resolve, then sync)"),
             Outcome::Failed(m) => println!("  failed to adopt: {m}"),
