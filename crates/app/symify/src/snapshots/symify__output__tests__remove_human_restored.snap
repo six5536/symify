@@ -1,0 +1,6 @@
+---
+source: crates/app/symify/src/output.rs
+expression: s
+---
+removed .bashrc from dots (/cfg/symify.toml)
+  restored: standalone copy at the live path

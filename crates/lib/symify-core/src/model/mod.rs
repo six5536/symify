@@ -47,3 +47,27 @@ impl LinkValue {
         matches!(self.kind(), LinkKind::Disabled)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn link_value_kind_covers_every_spelling() {
+        assert_eq!(LinkValue::Boolean(false).kind(), LinkKind::Disabled);
+        assert_eq!(LinkValue::Boolean(true).kind(), LinkKind::Mirror);
+        assert_eq!(LinkValue::String(String::new()).kind(), LinkKind::Mirror);
+        assert_eq!(
+            LinkValue::String("vim/vimrc".into()).kind(),
+            LinkKind::Explicit("vim/vimrc")
+        );
+    }
+
+    #[test]
+    fn is_disabled_only_for_false() {
+        assert!(LinkValue::Boolean(false).is_disabled());
+        assert!(!LinkValue::Boolean(true).is_disabled());
+        assert!(!LinkValue::String(String::new()).is_disabled());
+        assert!(!LinkValue::String("p".into()).is_disabled());
+    }
+}

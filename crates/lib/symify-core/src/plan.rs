@@ -1335,4 +1335,127 @@ mod tests {
             }
         );
     }
+
+    // ---- helpers exercised directly (not just via plan) ----
+
+    /// Borrow the single mapping out of a fixture config.
+    fn one_mapping(fx: &Fx) -> ResolvedMapping {
+        fx.cfg(Mode::Symlink, Conflict::Backup, vec![])
+            .mappings
+            .remove(0)
+    }
+
+    #[test]
+    fn resolve_paths_relative_absolute_and_explicit() {
+        let fx = Fx::new();
+        let m = one_mapping(&fx);
+        // Relative mirror key -> under live / under store.
+        let (l, s) = resolve_paths(&m, ".bashrc", LinkKind::Mirror);
+        assert_eq!(l, fx.lp(".bashrc"));
+        assert_eq!(s, fx.sp(".bashrc"));
+        // Absolute key -> literal live, store strips the leading slash.
+        let (l, s) = resolve_paths(&m, "/etc/x", LinkKind::Mirror);
+        assert_eq!(l, PathBuf::from("/etc/x"));
+        assert_eq!(s, fx.sp("etc/x"));
+        // Explicit value redirects the store side.
+        let (_, s) = resolve_paths(&m, "profile", LinkKind::Explicit("fixed/p"));
+        assert_eq!(s, fx.sp("fixed/p"));
+    }
+
+    #[test]
+    fn guard_reason_flags_protected_roots_store_containment_and_traversal() {
+        let fx = Fx::new();
+        let m = one_mapping(&fx);
+        // The live root itself is protected.
+        assert!(
+            guard_reason(&m, &fx.live, &fx.sp("x"))
+                .unwrap()
+                .unwrap()
+                .contains("protected root")
+        );
+        // The store root itself is protected.
+        assert!(guard_reason(&m, &fx.lp("x"), &fx.store).unwrap().is_some());
+        // A live path that contains the store root is refused.
+        let containing = fx.live.parent().unwrap().to_path_buf();
+        assert!(
+            guard_reason(&m, &containing, &fx.sp("x"))
+                .unwrap()
+                .unwrap()
+                .contains("contains the store root")
+        );
+        // A clean in-root file passes.
+        assert!(
+            guard_reason(&m, &fx.lp("ok"), &fx.sp("ok"))
+                .unwrap()
+                .is_none()
+        );
+        // A directory outside the live root (e.g. via `..`) is refused.
+        let outside = fx.live.parent().unwrap().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        assert!(
+            guard_reason(&m, &outside, &fx.sp("outside"))
+                .unwrap()
+                .unwrap()
+                .contains("outside the live root")
+        );
+        // A *file* outside the live root is allowed (only dirs are refused).
+        let file_outside = fx.live.parent().unwrap().join("loose.txt");
+        std::fs::write(&file_outside, b"x").unwrap();
+        assert!(
+            guard_reason(&m, &file_outside, &fx.sp("loose"))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn traversal_key_is_guarded_through_plan() {
+        let fx = Fx::new();
+        // A `..` key that resolves to a directory outside the live root must be
+        // refused by the planner, not silently operated on.
+        std::fs::create_dir_all(fx.live.join("../escape")).unwrap();
+        let cfg = fx.cfg(Mode::Symlink, Conflict::Backup, vec![("../escape", t())]);
+        assert!(matches!(act(&cfg, Verb::Deploy), Action::Failed(_)));
+    }
+
+    #[test]
+    fn empty_mapping_is_a_clean_no_op() {
+        let fx = Fx::new();
+        let cfg = fx.cfg(Mode::Symlink, Conflict::Backup, vec![]);
+        assert!(
+            plan(&cfg, Verb::Sync, RunOptions::default())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            plan(&cfg, Verb::Deploy, RunOptions::default())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            crate::status::status(&cfg, RunOptions::default())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn execute_continues_past_failures() {
+        use crate::clock::SystemClock;
+        let fx = Fx::new();
+        // Entry 1 is a guarded failure (a dir outside the live root); entry 2 is
+        // a normal deploy link. Execution must report both, not stop at the first.
+        std::fs::create_dir_all(fx.live.join("../esc")).unwrap();
+        fx.write(&fx.sp("ok"), b"v");
+        let cfg = fx.cfg(
+            Mode::Symlink,
+            Conflict::Backup,
+            vec![("../esc", t()), ("ok", t())],
+        );
+        let planned = plan(&cfg, Verb::Deploy, RunOptions::default()).unwrap();
+        let outcomes = execute(&planned, &SystemClock, false);
+        assert_eq!(outcomes.len(), 2);
+        assert!(outcomes.iter().any(|o| matches!(o, Outcome::Failed(_))));
+        assert!(outcomes.iter().any(|o| matches!(o, Outcome::Applied(_))));
+    }
 }

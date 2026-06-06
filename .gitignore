@@ -20,3 +20,8 @@
 /.cache/
 *.local.json
 .mise.local.toml
+
+# Coverage artifacts (cargo-llvm-cov)
+/target/llvm-cov
+/target/llvm-cov-target
+*.profraw

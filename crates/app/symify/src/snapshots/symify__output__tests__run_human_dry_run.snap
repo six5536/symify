@@ -1,0 +1,19 @@
+---
+source: crates/app/symify/src/output.rs
+expression: s
+---
+dry run — no changes applied
+
+  + adopt    dots/adopt
+  + relink   dots/relink
+  + link     dots/link
+  + push     dots/push (+1 ~1)
+  + pull     dots/pull (+1)
+  ! push     dots/drifted (+1 -1, drift)
+  = ok       dots/clean
+  - skipped  dots/skipped (nothing to do)
+  ! conflict dots/conflicted
+  · disabled dots/off
+  x failed   dots/broken (boom)
+
+sync: 6 would change, 1 ok, 1 skipped, 1 disabled, 2 conflicts, 1 failed

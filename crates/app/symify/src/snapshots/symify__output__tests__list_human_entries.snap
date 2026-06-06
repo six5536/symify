@@ -1,0 +1,7 @@
+---
+source: crates/app/symify/src/output.rs
+expression: "String::from_utf8(full).unwrap()"
+---
+dots  /home/user → /store/dots  symlink  backup  (2 entries)
+  .bashrc  /home/user/.bashrc → /store/dots/.bashrc
+  .vimrc  /home/user/.vimrc → /store/dots/vim/vimrc

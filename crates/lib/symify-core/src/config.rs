@@ -682,4 +682,68 @@ mod tests {
         assert!(second.created.is_none());
         assert_eq!(second.paths, vec![expected]);
     }
+
+    #[test]
+    fn config_base_dir_honours_xdg_then_falls_back_to_home() {
+        // SAFETY: nextest runs each test in its own process, so env edits here
+        // can't race other tests.
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", "/tmp/xdg");
+        }
+        assert_eq!(config_base_dir().unwrap(), PathBuf::from("/tmp/xdg/symify"));
+        assert_eq!(
+            default_config_path().unwrap(),
+            PathBuf::from("/tmp/xdg/symify/symify.toml")
+        );
+
+        // An empty XDG_CONFIG_HOME falls back to ~/.config.
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", "");
+            std::env::set_var("HOME", "/home/tester");
+        }
+        assert_eq!(home_dir().unwrap(), PathBuf::from("/home/tester"));
+        assert_eq!(
+            config_base_dir().unwrap(),
+            PathBuf::from("/home/tester/.config/symify")
+        );
+    }
+
+    #[test]
+    fn malformed_toml_reports_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.toml");
+        std::fs::write(&path, "this = = not valid").unwrap();
+        let err = load(std::slice::from_ref(&path)).unwrap_err();
+        // Current contract: a parse failure is an `Error::Toml` naming the file.
+        assert!(matches!(err, Error::Toml { .. }));
+        assert!(err.to_string().contains("bad.toml"), "got: {err}");
+    }
+
+    #[test]
+    fn unknown_keys_are_rejected() {
+        // Current contract: the schema sets `additionalProperties: false`, so the
+        // generated types deny unknown fields — an extra key is a hard parse error
+        // (a typo'd setting fails loudly rather than being silently ignored).
+        let err =
+            toml::from_str::<Config>("[settings]\nlive=\"~\"\nstore=\"~/d\"\nbogus_key = 42\n")
+                .unwrap_err();
+        assert!(
+            err.to_string().contains("unknown field"),
+            "expected unknown-field rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn empty_config_file_loads_to_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.toml");
+        std::fs::write(&path, "").unwrap();
+        let c = load(std::slice::from_ref(&path)).unwrap();
+        assert!(c.settings.is_none());
+        assert!(c.mappings.is_empty());
+        // No mappings means nothing needs roots, so resolve succeeds with an
+        // empty set rather than erroring.
+        let r = resolve(c).unwrap();
+        assert!(r.mappings.is_empty());
+    }
 }

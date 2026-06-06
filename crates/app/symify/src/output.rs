@@ -4,6 +4,7 @@
 //! Exit codes: `0` clean / success, `1` drift (unresolved conflicts, or any
 //! out-of-sync entry for `status`), `2` one or more failures.
 
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -86,13 +87,14 @@ struct RunSummary {
 }
 
 /// Render the result of a `sync`/`deploy` run; returns the process exit code.
-pub fn render_run(
+pub fn render_run<W: Write>(
+    w: &mut W,
     verb: Verb,
     dry_run: bool,
     planned: &[Planned],
     outcomes: &[Outcome],
     json: bool,
-) -> u8 {
+) -> io::Result<u8> {
     let mut summary = RunSummary::default();
     let mut entries = Vec::with_capacity(planned.len());
 
@@ -130,24 +132,24 @@ pub fn render_run(
             entries,
             summary,
         };
-        println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+        writeln!(w, "{}", serde_json::to_string_pretty(&doc).unwrap())?;
     } else {
         if dry_run {
-            println!("dry run — no changes applied\n");
+            writeln!(w, "dry run — no changes applied\n")?;
         }
         for e in &entries {
-            print_line(e);
+            print_line(w, e)?;
         }
-        print_run_summary(verb, dry_run, &summary);
+        print_run_summary(w, verb, dry_run, &summary)?;
     }
 
-    if failed > 0 {
+    Ok(if failed > 0 {
         EXIT_FAILURE
     } else if conflicts > 0 {
         EXIT_DRIFT
     } else {
         EXIT_OK
-    }
+    })
 }
 
 fn classify(
@@ -247,25 +249,32 @@ fn count_detail(copied: usize, backed_up: usize, pruned: usize, drift: bool) -> 
     }
 }
 
-fn print_line(e: &RunEntryJson) {
+fn print_line<W: Write>(w: &mut W, e: &RunEntryJson) -> io::Result<()> {
     let label = e.action.unwrap_or(e.outcome);
     let detail = match &e.detail {
         Some(d) => format!(" ({d})"),
         None => String::new(),
     };
-    println!(
+    writeln!(
+        w,
         "  {} {:<8} {}/{}{}",
         symbol(e.outcome),
         label,
         e.mapping,
         e.key,
         detail
-    );
+    )
 }
 
-fn print_run_summary(verb: Verb, dry_run: bool, s: &RunSummary) {
+fn print_run_summary<W: Write>(
+    w: &mut W,
+    verb: Verb,
+    dry_run: bool,
+    s: &RunSummary,
+) -> io::Result<()> {
     let verbed = if dry_run { "would change" } else { "changed" };
-    println!(
+    writeln!(
+        w,
         "\n{}: {} {}, {} ok, {} skipped, {} disabled, {} conflicts, {} failed",
         verb_str(verb),
         s.changed,
@@ -275,7 +284,7 @@ fn print_run_summary(verb: Verb, dry_run: bool, s: &RunSummary) {
         s.disabled,
         s.conflicts,
         s.failed
-    );
+    )
 }
 
 // ----- status -----------------------------------------------------------
@@ -320,7 +329,7 @@ fn status_str(label: &StatusLabel) -> &'static str {
 }
 
 /// Render `status` results; returns the process exit code.
-pub fn render_status(entries: &[StatusEntry], json: bool) -> u8 {
+pub fn render_status<W: Write>(w: &mut W, entries: &[StatusEntry], json: bool) -> io::Result<u8> {
     let mut summary = StatusSummary::default();
     let mut out = Vec::with_capacity(entries.len());
 
@@ -354,28 +363,29 @@ pub fn render_status(entries: &[StatusEntry], json: bool) -> u8 {
             entries: out,
             summary,
         };
-        println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+        writeln!(w, "{}", serde_json::to_string_pretty(&doc).unwrap())?;
     } else {
         for e in &out {
             let detail = match &e.detail {
                 Some(d) => format!(" ({d})"),
                 None => String::new(),
             };
-            println!("  {:<13} {}/{}{}", e.status, e.mapping, e.key, detail);
+            writeln!(w, "  {:<13} {}/{}{}", e.status, e.mapping, e.key, detail)?;
         }
-        println!(
+        writeln!(
+            w,
             "\nstatus: {} ok, {} drift, {} failed",
             summary.clean, drift, failed
-        );
+        )?;
     }
 
-    if failed > 0 {
+    Ok(if failed > 0 {
         EXIT_FAILURE
     } else if drift > 0 {
         EXIT_DRIFT
     } else {
         EXIT_OK
-    }
+    })
 }
 
 // ----- add / remove / list ----------------------------------------------
@@ -414,7 +424,8 @@ struct AddJson<'a> {
 
 /// Render the result of `add`; returns the exit code.
 #[allow(clippy::too_many_arguments)]
-pub fn render_add(
+pub fn render_add<W: Write>(
+    w: &mut W,
     mapping: &str,
     key: &str,
     file: Option<&Path>,
@@ -422,7 +433,7 @@ pub fn render_add(
     adopt: &Outcome,
     dry_run: bool,
     json: bool,
-) -> u8 {
+) -> io::Result<u8> {
     if json {
         let doc = AddJson {
             action: "add",
@@ -433,28 +444,30 @@ pub fn render_add(
             adopt: outcome_word(adopt),
             dry_run,
         };
-        println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+        writeln!(w, "{}", serde_json::to_string_pretty(&doc).unwrap())?;
     } else {
         let prefix = if dry_run { "would add" } else { "added" };
         match file {
-            Some(f) => println!("{prefix} {key} to {mapping} ({})", f.display()),
-            None => println!("{prefix} {key} to {mapping}"),
+            Some(f) => writeln!(w, "{prefix} {key} to {mapping} ({})", f.display())?,
+            None => writeln!(w, "{prefix} {key} to {mapping}")?,
         }
         if status == "unchanged" {
-            println!("  (already present)");
+            writeln!(w, "  (already present)")?;
         }
         let done = if dry_run { "would adopt" } else { "adopted" };
         match adopt {
-            Outcome::Applied(_) => println!("  {done}"),
-            Outcome::AppliedDrift(_) => println!("  {done} (drift remains — resolve, then sync)"),
-            Outcome::AlreadyOk => println!("  already in sync"),
-            Outcome::Conflict => println!("  conflict — not adopted (resolve, then sync)"),
-            Outcome::Failed(m) => println!("  failed to adopt: {m}"),
-            Outcome::Skipped(r) => println!("  not adopted: {r}"),
+            Outcome::Applied(_) => writeln!(w, "  {done}")?,
+            Outcome::AppliedDrift(_) => {
+                writeln!(w, "  {done} (drift remains — resolve, then sync)")?
+            }
+            Outcome::AlreadyOk => writeln!(w, "  already in sync")?,
+            Outcome::Conflict => writeln!(w, "  conflict — not adopted (resolve, then sync)")?,
+            Outcome::Failed(m) => writeln!(w, "  failed to adopt: {m}")?,
+            Outcome::Skipped(r) => writeln!(w, "  not adopted: {r}")?,
             Outcome::Disabled => {}
         }
     }
-    outcome_exit(adopt)
+    Ok(outcome_exit(adopt))
 }
 
 #[derive(Serialize)]
@@ -468,14 +481,15 @@ struct RemoveJson<'a> {
 }
 
 /// Render the result of `remove`; returns the exit code.
-pub fn render_remove(
+pub fn render_remove<W: Write>(
+    w: &mut W,
     mapping: &str,
     key: &str,
     files: &[PathBuf],
     restored: bool,
     dry_run: bool,
     json: bool,
-) -> u8 {
+) -> io::Result<u8> {
     if json {
         let doc = RemoveJson {
             action: "remove",
@@ -485,21 +499,21 @@ pub fn render_remove(
             restored,
             dry_run,
         };
-        println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+        writeln!(w, "{}", serde_json::to_string_pretty(&doc).unwrap())?;
     } else {
         let prefix = if dry_run { "would remove" } else { "removed" };
         if files.is_empty() {
-            println!("{prefix} {key} from {mapping}");
+            writeln!(w, "{prefix} {key} from {mapping}")?;
         } else {
             let list: Vec<String> = files.iter().map(|p| p.display().to_string()).collect();
-            println!("{prefix} {key} from {mapping} ({})", list.join(", "));
+            writeln!(w, "{prefix} {key} from {mapping} ({})", list.join(", "))?;
         }
         if restored {
             let r = if dry_run { "would restore" } else { "restored" };
-            println!("  {r}: standalone copy at the live path");
+            writeln!(w, "  {r}: standalone copy at the live path")?;
         }
     }
-    EXIT_OK
+    Ok(EXIT_OK)
 }
 
 #[derive(Serialize)]
@@ -534,7 +548,12 @@ fn conflict_str(c: symify_core::model::Conflict) -> &'static str {
 }
 
 /// Render `list`; returns the exit code.
-pub fn render_list(config: &ResolvedConfig, entries: bool, json: bool) -> u8 {
+pub fn render_list<W: Write>(
+    w: &mut W,
+    config: &ResolvedConfig,
+    entries: bool,
+    json: bool,
+) -> io::Result<u8> {
     if json {
         let mappings = config
             .mappings
@@ -559,19 +578,21 @@ pub fn render_list(config: &ResolvedConfig, entries: bool, json: bool) -> u8 {
                     .collect(),
             })
             .collect();
-        println!(
+        writeln!(
+            w,
             "{}",
             serde_json::to_string_pretty(&ListJson { mappings }).unwrap()
-        );
-        return EXIT_OK;
+        )?;
+        return Ok(EXIT_OK);
     }
 
     if config.mappings.is_empty() {
-        println!("no mappings configured");
-        return EXIT_OK;
+        writeln!(w, "no mappings configured")?;
+        return Ok(EXIT_OK);
     }
     for m in &config.mappings {
-        println!(
+        writeln!(
+            w,
             "{}  {} → {}  {}  {}  ({} entries)",
             m.name,
             m.live.display(),
@@ -579,13 +600,424 @@ pub fn render_list(config: &ResolvedConfig, entries: bool, json: bool) -> u8 {
             mode_str(m.mode),
             conflict_str(m.conflict),
             m.links.len()
-        );
+        )?;
         if entries {
             for (k, v) in &m.links {
                 let (live, store) = entry_paths(m, k, v);
-                println!("  {}  {} → {}", k, live.display(), store.display());
+                writeln!(w, "  {}  {} → {}", k, live.display(), store.display())?;
             }
         }
     }
-    EXIT_OK
+    Ok(EXIT_OK)
+}
+
+#[cfg(test)]
+mod tests {
+    //! Fixture-driven tests: the renderers are pure over in-memory data with
+    //! fixed fake paths, so human output is snapshot-stable (no tempdirs, no
+    //! timestamps, no redaction) and JSON is parsed and asserted by field.
+    use super::*;
+    use serde_json::Value;
+    use symify_core::config::ResolvedMapping;
+    use symify_core::model::{Conflict, LinkValue};
+
+    fn copy(key: &str) -> FsOp {
+        FsOp::Copy {
+            from: PathBuf::from(format!("/live/{key}")),
+            to: PathBuf::from(format!("/store/{key}")),
+        }
+    }
+
+    fn planned(key: &str, mode: Mode, action: Action) -> Planned {
+        Planned {
+            mapping: "dots".into(),
+            key: key.into(),
+            live: PathBuf::from(format!("/live/{key}")),
+            store: PathBuf::from(format!("/store/{key}")),
+            mode,
+            conflict: Conflict::Backup,
+            action,
+        }
+    }
+
+    /// One entry per outcome, paired so `action` matches `outcome` as the
+    /// executor would produce. Exercises every `ActionKind` and `Outcome`.
+    fn run_fixture() -> (Vec<Planned>, Vec<Outcome>) {
+        use ActionKind::*;
+        let p = vec![
+            planned(
+                "adopt",
+                Mode::Symlink,
+                Action::Apply {
+                    kind: Adopt,
+                    ops: vec![FsOp::Symlink {
+                        link: "/live/adopt".into(),
+                        target: "/store/adopt".into(),
+                    }],
+                },
+            ),
+            planned(
+                "relink",
+                Mode::Symlink,
+                Action::Apply {
+                    kind: Relink,
+                    ops: vec![],
+                },
+            ),
+            planned(
+                "link",
+                Mode::Symlink,
+                Action::Apply {
+                    kind: Link,
+                    ops: vec![],
+                },
+            ),
+            planned(
+                "push",
+                Mode::Sync,
+                Action::Apply {
+                    kind: Push,
+                    ops: vec![copy("push"), FsOp::Backup("/store/push".into())],
+                },
+            ),
+            planned(
+                "pull",
+                Mode::Sync,
+                Action::Apply {
+                    kind: Pull,
+                    ops: vec![copy("pull")],
+                },
+            ),
+            planned(
+                "drifted",
+                Mode::Sync,
+                Action::ApplyDrift {
+                    kind: Push,
+                    ops: vec![copy("drifted"), FsOp::Remove("/store/old".into())],
+                },
+            ),
+            planned("clean", Mode::Symlink, Action::AlreadyOk),
+            planned("skipped", Mode::Sync, Action::Skip("nothing to do")),
+            planned("conflicted", Mode::Sync, Action::Conflict),
+            planned("off", Mode::Symlink, Action::Disabled),
+            planned("broken", Mode::Symlink, Action::Failed("boom".into())),
+        ];
+        let o = vec![
+            Outcome::Applied(Adopt),
+            Outcome::Applied(Relink),
+            Outcome::Applied(Link),
+            Outcome::Applied(Push),
+            Outcome::Applied(Pull),
+            Outcome::AppliedDrift(Push),
+            Outcome::AlreadyOk,
+            Outcome::Skipped("nothing to do"),
+            Outcome::Conflict,
+            Outcome::Disabled,
+            Outcome::Failed("boom".into()),
+        ];
+        (p, o)
+    }
+
+    fn render_to_string(json: bool, dry_run: bool) -> (String, u8) {
+        let (p, o) = run_fixture();
+        let mut buf = Vec::new();
+        let code = render_run(&mut buf, Verb::Sync, dry_run, &p, &o, json).unwrap();
+        (String::from_utf8(buf).unwrap(), code)
+    }
+
+    #[test]
+    fn run_human_every_outcome() {
+        let (s, code) = render_to_string(false, false);
+        // The fixture has a failure (and conflicts) -> failure code wins.
+        assert_eq!(code, EXIT_FAILURE);
+        insta::assert_snapshot!("run_human_every_outcome", s);
+    }
+
+    #[test]
+    fn run_human_dry_run_annotates() {
+        let (s, _) = render_to_string(false, true);
+        assert!(s.starts_with("dry run — no changes applied\n"));
+        assert!(s.contains("would change"));
+        insta::assert_snapshot!("run_human_dry_run", s);
+    }
+
+    #[test]
+    fn run_json_shape_and_counters() {
+        let (s, code) = render_to_string(true, false);
+        assert_eq!(code, EXIT_FAILURE);
+        let v: Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["verb"], "sync");
+        assert_eq!(v["dry_run"], false);
+        let entries = v["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 11);
+
+        // push: one copy + one backup, no prune.
+        let push = entries.iter().find(|e| e["key"] == "push").unwrap();
+        assert_eq!(push["outcome"], "applied");
+        assert_eq!(push["action"], "push");
+        assert_eq!(push["copied"], 1);
+        assert_eq!(push["backed_up"], 1);
+        assert_eq!(push["pruned"], 0);
+        assert_eq!(push["drift"], false);
+        assert_eq!(push["mode"], "sync");
+
+        // drifted: applied-drift carries copied + pruned and drift=true.
+        let drifted = entries.iter().find(|e| e["key"] == "drifted").unwrap();
+        assert_eq!(drifted["outcome"], "applied-drift");
+        assert_eq!(drifted["copied"], 1);
+        assert_eq!(drifted["pruned"], 1);
+        assert_eq!(drifted["drift"], true);
+
+        // Summary counts: 5 plain applied + 1 applied-drift = 6 changed; the
+        // applied-drift and the conflict both count as conflicts (= 2).
+        let sum = &v["summary"];
+        assert_eq!(sum["changed"], 6);
+        assert_eq!(sum["ok"], 1);
+        assert_eq!(sum["skipped"], 1);
+        assert_eq!(sum["disabled"], 1);
+        assert_eq!(sum["conflicts"], 2);
+        assert_eq!(sum["failed"], 1);
+    }
+
+    #[test]
+    fn run_json_failure_outranks_drift_in_exit() {
+        let p = vec![planned("x", Mode::Sync, Action::Failed("nope".into()))];
+        let o = vec![Outcome::Failed("nope".into())];
+        let mut buf = Vec::new();
+        let code = render_run(&mut buf, Verb::Deploy, false, &p, &o, true).unwrap();
+        assert_eq!(code, EXIT_FAILURE);
+        let v: Value = serde_json::from_str(&String::from_utf8(buf).unwrap()).unwrap();
+        assert_eq!(v["verb"], "deploy");
+        assert_eq!(v["entries"][0]["detail"], "nope");
+    }
+
+    // ----- status --------------------------------------------------------
+
+    fn status_fixture() -> Vec<StatusEntry> {
+        let mk = |key: &str, mode: Mode, label: StatusLabel| StatusEntry {
+            mapping: "dots".into(),
+            key: key.into(),
+            live: PathBuf::from(format!("/live/{key}")),
+            store: PathBuf::from(format!("/store/{key}")),
+            mode,
+            label,
+        };
+        vec![
+            mk("ok", Mode::Symlink, StatusLabel::Ok),
+            mk("off", Mode::Symlink, StatusLabel::Disabled),
+            mk("unadopted", Mode::Symlink, StatusLabel::Unadopted),
+            mk("wrong", Mode::Symlink, StatusLabel::WrongTarget),
+            mk("live-missing", Mode::Symlink, StatusLabel::LiveMissing),
+            mk("store-missing", Mode::Sync, StatusLabel::StoreMissing),
+            mk("missing", Mode::Symlink, StatusLabel::Missing),
+            mk("differs", Mode::Sync, StatusLabel::Differs),
+            mk(
+                "broken",
+                Mode::Symlink,
+                StatusLabel::Failed("guarded".into()),
+            ),
+        ]
+    }
+
+    #[test]
+    fn status_human_every_label() {
+        let mut buf = Vec::new();
+        let code = render_status(&mut buf, &status_fixture(), false).unwrap();
+        // Has drift and a failure -> failure code wins.
+        assert_eq!(code, EXIT_FAILURE);
+        insta::assert_snapshot!("status_human_every_label", String::from_utf8(buf).unwrap());
+    }
+
+    #[test]
+    fn status_json_summary_and_detail() {
+        let mut buf = Vec::new();
+        render_status(&mut buf, &status_fixture(), true).unwrap();
+        let v: Value = serde_json::from_str(&String::from_utf8(buf).unwrap()).unwrap();
+        let sum = &v["summary"];
+        // Ok + Disabled are clean (2); failed (1); the rest are drift (6).
+        assert_eq!(sum["clean"], 2);
+        assert_eq!(sum["drift"], 6);
+        assert_eq!(sum["failed"], 1);
+        let broken = v["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["key"] == "broken")
+            .unwrap();
+        assert_eq!(broken["status"], "failed");
+        assert_eq!(broken["detail"], "guarded");
+    }
+
+    #[test]
+    fn status_clean_exits_ok() {
+        let entries = vec![StatusEntry {
+            mapping: "dots".into(),
+            key: "x".into(),
+            live: "/live/x".into(),
+            store: "/store/x".into(),
+            mode: Mode::Symlink,
+            label: StatusLabel::Ok,
+        }];
+        let mut buf = Vec::new();
+        let code = render_status(&mut buf, &entries, false).unwrap();
+        assert_eq!(code, EXIT_OK);
+    }
+
+    // ----- list ----------------------------------------------------------
+
+    fn list_config() -> ResolvedConfig {
+        ResolvedConfig {
+            mappings: vec![ResolvedMapping {
+                name: "dots".into(),
+                live: "/home/user".into(),
+                store: "/store/dots".into(),
+                mode: Mode::Symlink,
+                conflict: Conflict::Backup,
+                mirror: false,
+                links: vec![
+                    (".bashrc".into(), LinkValue::Boolean(true)),
+                    (".vimrc".into(), LinkValue::String("vim/vimrc".into())),
+                ],
+            }],
+        }
+    }
+
+    #[test]
+    fn list_human_with_and_without_entries() {
+        let cfg = list_config();
+        let mut brief = Vec::new();
+        render_list(&mut brief, &cfg, false, false).unwrap();
+        insta::assert_snapshot!("list_human_brief", String::from_utf8(brief).unwrap());
+
+        let mut full = Vec::new();
+        render_list(&mut full, &cfg, true, false).unwrap();
+        insta::assert_snapshot!("list_human_entries", String::from_utf8(full).unwrap());
+    }
+
+    #[test]
+    fn list_human_empty() {
+        let cfg = ResolvedConfig { mappings: vec![] };
+        let mut buf = Vec::new();
+        let code = render_list(&mut buf, &cfg, true, false).unwrap();
+        assert_eq!(code, EXIT_OK);
+        assert_eq!(String::from_utf8(buf).unwrap(), "no mappings configured\n");
+    }
+
+    #[test]
+    fn list_json_resolves_entry_paths() {
+        let cfg = list_config();
+        let mut buf = Vec::new();
+        render_list(&mut buf, &cfg, true, true).unwrap();
+        let v: Value = serde_json::from_str(&String::from_utf8(buf).unwrap()).unwrap();
+        let m = &v["mappings"][0];
+        assert_eq!(m["name"], "dots");
+        assert_eq!(m["mode"], "symlink");
+        assert_eq!(m["conflict"], "backup");
+        let entries = m["entries"].as_array().unwrap();
+        let bashrc = entries.iter().find(|e| e["key"] == ".bashrc").unwrap();
+        assert_eq!(bashrc["live"], "/home/user/.bashrc");
+        assert_eq!(bashrc["store"], "/store/dots/.bashrc");
+        // Explicit string value redirects the store side.
+        let vimrc = entries.iter().find(|e| e["key"] == ".vimrc").unwrap();
+        assert_eq!(vimrc["store"], "/store/dots/vim/vimrc");
+    }
+
+    // ----- add / remove --------------------------------------------------
+
+    #[test]
+    fn add_human_variants() {
+        let mut buf = Vec::new();
+        let code = render_add(
+            &mut buf,
+            "dots",
+            ".bashrc",
+            Some(Path::new("/cfg/symify.toml")),
+            "added",
+            &Outcome::Applied(ActionKind::Adopt),
+            false,
+            false,
+        )
+        .unwrap();
+        assert_eq!(code, EXIT_OK);
+        insta::assert_snapshot!("add_human_applied", String::from_utf8(buf).unwrap());
+
+        let mut buf2 = Vec::new();
+        render_add(
+            &mut buf2,
+            "dots",
+            ".bashrc",
+            None,
+            "unchanged",
+            &Outcome::Conflict,
+            false,
+            false,
+        )
+        .unwrap();
+        let s = String::from_utf8(buf2).unwrap();
+        assert!(s.contains("(already present)"));
+        assert!(s.contains("conflict — not adopted"));
+    }
+
+    #[test]
+    fn add_json_and_exit_codes() {
+        let mut buf = Vec::new();
+        let code = render_add(
+            &mut buf,
+            "dots",
+            ".bashrc",
+            Some(Path::new("/cfg/symify.toml")),
+            "added",
+            &Outcome::AppliedDrift(ActionKind::Push),
+            false,
+            true,
+        )
+        .unwrap();
+        assert_eq!(code, EXIT_DRIFT);
+        let v: Value = serde_json::from_str(&String::from_utf8(buf).unwrap()).unwrap();
+        assert_eq!(v["action"], "add");
+        assert_eq!(v["adopt"], "push");
+        assert_eq!(v["file"], "/cfg/symify.toml");
+
+        let mut buf2 = Vec::new();
+        let code2 = render_add(
+            &mut buf2,
+            "dots",
+            "x",
+            None,
+            "added",
+            &Outcome::Failed("nope".into()),
+            false,
+            true,
+        )
+        .unwrap();
+        assert_eq!(code2, EXIT_FAILURE);
+    }
+
+    #[test]
+    fn remove_human_and_json() {
+        let mut buf = Vec::new();
+        let code = render_remove(
+            &mut buf,
+            "dots",
+            ".bashrc",
+            &[PathBuf::from("/cfg/symify.toml")],
+            true,
+            false,
+            false,
+        )
+        .unwrap();
+        assert_eq!(code, EXIT_OK);
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("removed .bashrc from dots"));
+        assert!(s.contains("restored: standalone copy"));
+        insta::assert_snapshot!("remove_human_restored", s);
+
+        let mut buf2 = Vec::new();
+        render_remove(&mut buf2, "dots", ".bashrc", &[], false, true, true).unwrap();
+        let v: Value = serde_json::from_str(&String::from_utf8(buf2).unwrap()).unwrap();
+        assert_eq!(v["action"], "remove");
+        assert_eq!(v["restored"], false);
+        assert_eq!(v["dry_run"], true);
+        assert_eq!(v["files"].as_array().unwrap().len(), 0);
+    }
 }

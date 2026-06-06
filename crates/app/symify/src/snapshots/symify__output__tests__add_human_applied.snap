@@ -1,0 +1,6 @@
+---
+source: crates/app/symify/src/output.rs
+expression: "String::from_utf8(buf).unwrap()"
+---
+added .bashrc to dots (/cfg/symify.toml)
+  adopted

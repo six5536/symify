@@ -662,4 +662,178 @@ mod tests {
             .collect();
         assert!(leftovers.is_empty(), "temp left behind: {leftovers:?}");
     }
+
+    #[test]
+    fn is_nonempty_dir_cases() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        let empty = base.join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        let full = base.join("full");
+        std::fs::create_dir(&full).unwrap();
+        std::fs::write(full.join("f"), b"x").unwrap();
+        let file = base.join("file");
+        std::fs::write(&file, b"x").unwrap();
+        let link = base.join("link");
+        std::os::unix::fs::symlink(&full, &link).unwrap();
+
+        assert!(!is_nonempty_dir(&empty));
+        assert!(is_nonempty_dir(&full));
+        assert!(!is_nonempty_dir(&base.join("missing")));
+        assert!(!is_nonempty_dir(&file), "a file is not a dir");
+        assert!(
+            !is_nonempty_dir(&link),
+            "a symlink-to-dir is not a real dir"
+        );
+    }
+
+    #[test]
+    fn dir_entries_filters_artifacts_sorts_and_errors_on_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        let d = base.join("d");
+        std::fs::create_dir(&d).unwrap();
+        // Insert out of order; expect sorted, artifact-free output.
+        std::fs::write(d.join("b.txt"), b"").unwrap();
+        std::fs::write(d.join("a.txt"), b"").unwrap();
+        std::fs::write(d.join("note.bak"), b"").unwrap();
+        std::fs::write(d.join(".f.symify-tmp.1.2"), b"").unwrap();
+
+        let names: Vec<String> = dir_entries(&d)
+            .unwrap()
+            .iter()
+            .map(|n| n.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["a.txt".to_string(), "b.txt".to_string()]);
+
+        assert!(dir_entries(&base.join("missing")).is_err());
+    }
+
+    #[test]
+    fn dangling_symlink_inspected_as_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        let l = base.join("l");
+        std::os::unix::fs::symlink("does/not/exist", &l).unwrap();
+        assert_eq!(
+            inspect(&l).unwrap(),
+            NodeKind::Symlink("does/not/exist".into())
+        );
+        assert!(!is_nonempty_dir(&l));
+    }
+
+    #[test]
+    fn symlink_self_and_cycle_do_not_recurse() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        // A self-referential link: inspecting it must not follow (no hang).
+        let s = base.join("self");
+        std::os::unix::fs::symlink(&s, &s).unwrap();
+        assert!(matches!(inspect(&s).unwrap(), NodeKind::Symlink(_)));
+
+        // A 2-cycle a -> b -> a: comparisons treat links by target string and
+        // never follow, so they terminate.
+        let a = base.join("a");
+        let b = base.join("b");
+        std::os::unix::fs::symlink(&b, &a).unwrap();
+        std::os::unix::fs::symlink(&a, &b).unwrap();
+        assert!(matches!(inspect(&a).unwrap(), NodeKind::Symlink(_)));
+        assert!(content_equal(&a, &a).unwrap()); // identical target strings
+        assert!(!content_equal(&a, &b).unwrap()); // a->b vs b->a differ
+        assert!(!quick_equal(&a, &b, 0).unwrap());
+    }
+
+    #[test]
+    fn special_characters_in_filenames_round_trip() {
+        use crate::clock::SystemClock;
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        let src = base.join("src");
+        std::fs::create_dir(&src).unwrap();
+        let names = ["a file.txt", "naïve→data", "a:b", "emoji😀"];
+        for name in names {
+            std::fs::write(src.join(name), name.as_bytes()).unwrap();
+        }
+
+        let dst = base.join("dst");
+        apply_op(
+            &FsOp::Copy {
+                from: src.clone(),
+                to: dst.clone(),
+            },
+            &SystemClock,
+        )
+        .unwrap();
+
+        // The whole tree copies and compares equal under both identity checks.
+        assert!(content_equal(&src, &dst).unwrap());
+        assert!(quick_equal(&src, &dst, 0).unwrap());
+        let entries = dir_entries(&dst).unwrap();
+        for name in names {
+            assert!(
+                entries.contains(std::ffi::OsStr::new(name)),
+                "missing {name:?} after copy"
+            );
+        }
+    }
+
+    #[test]
+    fn copy_file_atomic_cleans_temp_on_failure() {
+        // Make the final rename fail (the destination is an existing directory),
+        // so the temp is created then must be cleaned up by the error path.
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        let from = base.join("from");
+        std::fs::write(&from, b"payload").unwrap();
+        let to = base.join("to");
+        std::fs::create_dir(&to).unwrap(); // a dir can't be renamed-over by a file
+
+        let res = copy_file_atomic(&from, &to);
+        assert!(res.is_err(), "rename over a directory should fail");
+
+        let leftovers: Vec<_> = std::fs::read_dir(base)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| is_artifact(&e.file_name()))
+            .collect();
+        assert!(leftovers.is_empty(), "temp not cleaned up: {leftovers:?}");
+    }
+
+    #[test]
+    fn copy_into_readonly_dir_errors_without_leaking_temp() {
+        use crate::clock::SystemClock;
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        let src = base.join("src");
+        std::fs::write(&src, b"data").unwrap();
+        let ro = base.join("ro");
+        std::fs::create_dir(&ro).unwrap();
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        // Probe whether perms are actually enforced (they aren't under root).
+        let enforced = std::fs::File::create(ro.join(".probe")).is_err();
+
+        let res = apply_op(
+            &FsOp::Copy {
+                from: src,
+                to: ro.join("dst"),
+            },
+            &SystemClock,
+        );
+
+        if enforced {
+            assert!(res.is_err(), "copy into a read-only dir must fail cleanly");
+        }
+        // Restore perms so the tempdir can be cleaned up, then check for leaks.
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if enforced {
+            let leftovers: Vec<_> = std::fs::read_dir(&ro)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| is_artifact(&e.file_name()))
+                .collect();
+            assert!(leftovers.is_empty(), "temp leaked: {leftovers:?}");
+        }
+    }
 }

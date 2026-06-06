@@ -2,7 +2,9 @@
 node = "24"
 
 python = '3.14'
-rust = '1.96'
+# 1.96 is the project toolchain; nightly is used only by the coverage
+# subcommand (cargo +nightly llvm-cov), which needs `coverage(off)` markers.
+rust = ['1.96', 'nightly']
 sccache = '0.15'
 
 "npm:@anthropic-ai/claude-code" = { version = "latest", npm_args = "--ignore-scripts=false" }
@@ -10,3 +12,4 @@ zig = "0.16.0"
 "cargo:cargo-zigbuild" = "0.22.3"
 "cargo:cargo-typify" = "0.6.2"
 "cargo:cargo-nextest" = "0.9.137"
+"cargo:cargo-llvm-cov" = "0.8.7"

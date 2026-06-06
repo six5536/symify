@@ -1,9 +1,14 @@
 //! symify CLI entry point.
+// Under the nightly coverage job (cargo-llvm-cov sets `coverage_nightly`), enable
+// the attribute used to exclude genuinely untestable glue from coverage. Inert on
+// the stable toolchain used for normal builds and tests.
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
 mod cli;
 mod confirm;
 mod output;
 
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -38,7 +43,7 @@ fn run() -> symify_core::Result<u8> {
         Cli::command().print_help().ok();
         return Ok(output::EXIT_OK);
     };
-    if is_mutating(&command) && is_root() && !cli.allow_root {
+    if root_refused(is_mutating(&command), is_root(), cli.allow_root) {
         return Err(Error::config(
             "refusing to run as root; re-run with --allow-root if you really mean it",
         ));
@@ -62,9 +67,24 @@ fn is_mutating(command: &Command) -> bool {
     )
 }
 
+/// Whether a mutating command should be refused: we're root and `--allow-root`
+/// was not given. Kept as a pure decision, separate from the `geteuid` syscall,
+/// so it is unit-testable without actually being root.
+fn root_refused(mutating: bool, root: bool, allow_root: bool) -> bool {
+    mutating && root && !allow_root
+}
+
+/// Map a stdout write failure into a `symify` error so render helpers can use `?`.
+fn stdout_err(e: io::Error) -> Error {
+    Error::io(Path::new("<stdout>"), e)
+}
+
 /// True when the process is running with an effective uid of 0 (root). We declare
 /// `geteuid` directly rather than depend on `libc`; it is always linked on Unix.
+/// The raw syscall wrapper is excluded from coverage: it can't be exercised
+/// without actually running as root. The pure decision lives in `root_refused`.
 #[cfg(unix)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn is_root() -> bool {
     unsafe extern "C" {
         fn geteuid() -> u32;
@@ -75,6 +95,7 @@ fn is_root() -> bool {
 /// Off Unix there is no euid concept here; never refuse. (Windows admin detection
 /// is a future-milestone concern.)
 #[cfg(not(unix))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn is_root() -> bool {
     false
 }
@@ -111,13 +132,15 @@ fn run_verb(verb: Verb, args: RunArgs) -> symify_core::Result<u8> {
         return Ok(output::EXIT_OK);
     }
     let outcomes = execute(&planned, &SystemClock, args.dry_run);
-    Ok(output::render_run(
+    output::render_run(
+        &mut io::stdout().lock(),
         verb,
         args.dry_run,
         &planned,
         &outcomes,
         args.json,
-    ))
+    )
+    .map_err(stdout_err)
 }
 
 fn run_status(args: QueryArgs) -> symify_core::Result<u8> {
@@ -127,13 +150,14 @@ fn run_status(args: QueryArgs) -> symify_core::Result<u8> {
         checksum: args.checksum,
         modify_window: args.modify_window,
     };
-    Ok(output::render_status(&status(&cfg, opts)?, args.json))
+    output::render_status(&mut io::stdout().lock(), &status(&cfg, opts)?, args.json)
+        .map_err(stdout_err)
 }
 
 fn run_list(args: ListArgs) -> symify_core::Result<u8> {
     let (_, resolved) = load_set(&args.config)?;
     let cfg = config::select(resolved, &args.mapping)?;
-    Ok(output::render_list(&cfg, args.entries, args.json))
+    output::render_list(&mut io::stdout().lock(), &cfg, args.entries, args.json).map_err(stdout_err)
 }
 
 fn run_add(args: AddArgs) -> symify_core::Result<u8> {
@@ -214,7 +238,8 @@ fn run_add(args: AddArgs) -> symify_core::Result<u8> {
 
     if args.dry_run {
         let outcomes = execute(&planned, &SystemClock, true);
-        return Ok(output::render_add(
+        return output::render_add(
+            &mut io::stdout().lock(),
             &mapping_name,
             &key,
             None,
@@ -222,7 +247,8 @@ fn run_add(args: AddArgs) -> symify_core::Result<u8> {
             &outcomes[0],
             true,
             args.json,
-        ));
+        )
+        .map_err(stdout_err);
     }
 
     let report = edit::add_link(&files, &primary, &mapping_name, &key, value, args.force)?;
@@ -232,7 +258,8 @@ fn run_add(args: AddArgs) -> symify_core::Result<u8> {
         edit::AddStatus::Replaced => "replaced",
         edit::AddStatus::Unchanged => "unchanged",
     };
-    Ok(output::render_add(
+    output::render_add(
+        &mut io::stdout().lock(),
         &mapping_name,
         &key,
         Some(&report.file),
@@ -240,7 +267,8 @@ fn run_add(args: AddArgs) -> symify_core::Result<u8> {
         &outcomes[0],
         false,
         args.json,
-    ))
+    )
+    .map_err(stdout_err)
 }
 
 fn run_remove(args: RemoveArgs) -> symify_core::Result<u8> {
@@ -266,28 +294,32 @@ fn run_remove(args: RemoveArgs) -> symify_core::Result<u8> {
     let restored = !args.no_restore && would_restore(&s, &d, m.mode)?;
 
     if args.dry_run {
-        return Ok(output::render_remove(
+        return output::render_remove(
+            &mut io::stdout().lock(),
             &mapping_name,
             &key,
             &[],
             restored,
             true,
             args.json,
-        ));
+        )
+        .map_err(stdout_err);
     }
 
     if restored {
         do_restore(&s, &d)?;
     }
     let edited = edit::remove_link(&files, &mapping_name, &key)?;
-    Ok(output::render_remove(
+    output::render_remove(
+        &mut io::stdout().lock(),
         &mapping_name,
         &key,
         &edited,
         restored,
         false,
         args.json,
-    ))
+    )
+    .map_err(stdout_err)
 }
 
 // ----- helpers -----------------------------------------------------------
@@ -331,4 +363,114 @@ fn do_restore(s: &Path, d: &Path) -> symify_core::Result<()> {
         &SystemClock,
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use symify_core::model::Conflict;
+
+    fn cmd(args: &[&str]) -> Command {
+        Cli::try_parse_from(args).unwrap().command.unwrap()
+    }
+
+    #[test]
+    fn root_refused_truth_table() {
+        // Only refuse when mutating AND root AND not allow_root.
+        assert!(root_refused(true, true, false));
+        assert!(!root_refused(true, true, true)); // --allow-root overrides
+        assert!(!root_refused(true, false, false)); // not root
+        assert!(!root_refused(false, true, false)); // read-only verb
+        // Exhaustive: only the (T,T,F) corner is true.
+        for m in [false, true] {
+            for r in [false, true] {
+                for a in [false, true] {
+                    assert_eq!(root_refused(m, r, a), m && r && !a);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn is_mutating_classifies_every_verb() {
+        assert!(is_mutating(&cmd(&["symify", "sync"])));
+        assert!(is_mutating(&cmd(&["symify", "deploy"])));
+        assert!(is_mutating(&cmd(&["symify", "add", "/tmp/x"])));
+        assert!(is_mutating(&cmd(&["symify", "remove", "/tmp/x"])));
+        assert!(!is_mutating(&cmd(&["symify", "status"])));
+        assert!(!is_mutating(&cmd(&["symify", "list"])));
+    }
+
+    #[test]
+    fn derive_key_relativizes_in_root_else_absolute() {
+        let live = Path::new("/home/user");
+        // In-root path becomes a relative key.
+        assert_eq!(derive_key(Path::new("/home/user/.bashrc"), live), ".bashrc");
+        assert_eq!(
+            derive_key(Path::new("/home/user/.config/nvim"), live),
+            ".config/nvim"
+        );
+        // Outside the live root keeps an absolute key.
+        assert_eq!(derive_key(Path::new("/etc/hosts"), live), "/etc/hosts");
+    }
+
+    fn mapping(name: &str) -> ResolvedMapping {
+        ResolvedMapping {
+            name: name.into(),
+            live: "/live".into(),
+            store: "/store".into(),
+            mode: Mode::Symlink,
+            conflict: Conflict::Backup,
+            mirror: false,
+            links: vec![],
+        }
+    }
+
+    #[test]
+    fn would_restore_and_do_restore_replace_link_with_copy() {
+        // entry_paths yields (s, d) = (live, store); mirror these names here.
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("store_f");
+        let live = dir.path().join("live_f");
+        std::fs::write(&store, b"content").unwrap();
+        std::os::unix::fs::symlink(&store, &live).unwrap();
+
+        // Symlink mode: a live link pointing at store would be restored.
+        assert!(would_restore(&live, &store, Mode::Symlink).unwrap());
+        // Sync mode keeps independent copies — never "restores".
+        assert!(!would_restore(&live, &store, Mode::Sync).unwrap());
+        // A missing store side short-circuits to false.
+        let missing_store = dir.path().join("gone");
+        assert!(!would_restore(&live, &missing_store, Mode::Symlink).unwrap());
+
+        do_restore(&live, &store).unwrap();
+        // Live is now a standalone copy; the store content is left in place.
+        assert!(
+            std::fs::symlink_metadata(&live)
+                .unwrap()
+                .file_type()
+                .is_file()
+        );
+        assert_eq!(std::fs::read(&live).unwrap(), b"content");
+        assert!(store.exists(), "do_restore must not remove the store side");
+    }
+
+    #[test]
+    fn sole_mapping_defaults_and_errors() {
+        // Exactly one -> its name.
+        let one = ResolvedConfig {
+            mappings: vec![mapping("dots")],
+        };
+        assert_eq!(sole_mapping(&one).unwrap(), "dots");
+
+        // None -> error asking for -m.
+        let none = ResolvedConfig { mappings: vec![] };
+        assert!(matches!(sole_mapping(&none), Err(Error::Config(_))));
+
+        // Many -> error asking for -m.
+        let many = ResolvedConfig {
+            mappings: vec![mapping("a"), mapping("b")],
+        };
+        assert!(matches!(sole_mapping(&many), Err(Error::Config(_))));
+    }
 }

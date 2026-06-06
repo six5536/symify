@@ -16,6 +16,11 @@ categories.workspace = true
 name = "symify"
 path = "src/main.rs"
 
+[lints.rust]
+# `coverage_nightly` is set by cargo-llvm-cov under the nightly coverage job; it
+# is an expected cfg, not a typo, on every other toolchain.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }
+
 [dependencies]
 symify-core.workspace = true
 clap = { workspace = true }
@@ -24,5 +29,6 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
+insta = { workspace = true }
 tempfile = { workspace = true }
 serde_json = { workspace = true }

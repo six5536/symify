@@ -1,0 +1,15 @@
+---
+source: crates/app/symify/src/output.rs
+expression: "String::from_utf8(buf).unwrap()"
+---
+  ok            dots/ok
+  disabled      dots/off
+  unadopted     dots/unadopted
+  wrong-target  dots/wrong
+  live-missing  dots/live-missing
+  store-missing dots/store-missing
+  missing       dots/missing
+  differs       dots/differs
+  failed        dots/broken (guarded)
+
+status: 2 ok, 6 drift, 1 failed

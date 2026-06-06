@@ -1,0 +1,5 @@
+---
+source: crates/app/symify/src/output.rs
+expression: "String::from_utf8(brief).unwrap()"
+---
+dots  /home/user → /store/dots  symlink  backup  (2 entries)

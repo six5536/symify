@@ -51,3 +51,66 @@ impl Error {
         Error::Config(msg.into())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error as _;
+    use std::io;
+    use std::path::Path;
+
+    #[test]
+    fn io_constructor_and_display() {
+        let e = Error::io(
+            Path::new("/tmp/x"),
+            io::Error::new(io::ErrorKind::PermissionDenied, "denied"),
+        );
+        assert!(matches!(e, Error::Io { .. }));
+        let msg = e.to_string();
+        assert!(msg.contains("/tmp/x"), "display names the path: {msg}");
+        assert!(msg.contains("denied"), "display includes the source: {msg}");
+        // The underlying io::Error is exposed as the error source.
+        assert!(e.source().is_some());
+    }
+
+    #[test]
+    fn config_constructor_and_display() {
+        let e = Error::config("bad mapping");
+        assert!(matches!(e, Error::Config(_)));
+        assert_eq!(e.to_string(), "config error: bad mapping");
+        // A semantic error has no underlying source.
+        assert!(e.source().is_none());
+    }
+
+    #[test]
+    fn config_accepts_string_and_str() {
+        // Both `&str` and `String` satisfy `impl Into<String>`.
+        let _from_str = Error::config("literal");
+        let owned = format!("dynamic {}", 1);
+        assert_eq!(Error::config(owned).to_string(), "config error: dynamic 1");
+    }
+
+    #[test]
+    fn nohome_display() {
+        let e = Error::NoHome;
+        assert_eq!(
+            e.to_string(),
+            "could not determine home directory for `~` expansion"
+        );
+        assert!(e.source().is_none());
+    }
+
+    #[test]
+    fn toml_variant_display_and_source() {
+        // Build a real parse error to populate the Toml variant.
+        let parse = toml::from_str::<crate::model::Config>("= not valid toml").unwrap_err();
+        let e = Error::Toml {
+            path: "/cfg/symify.toml".into(),
+            source: parse,
+        };
+        let msg = e.to_string();
+        assert!(msg.contains("/cfg/symify.toml"), "names the file: {msg}");
+        assert!(msg.starts_with("failed to parse config"));
+        assert!(e.source().is_some());
+    }
+}
