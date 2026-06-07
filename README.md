@@ -67,7 +67,7 @@ aside to `<name>.<timestamp>.bak` before linking, so nothing is lost. Run
 ## Configuration
 
 `[settings]` sets the defaults; each `[mappings.<name>]` can override `live`,
-`store`, `mode`, `conflict`, or `mirror`.
+`store`, `mode`, or `conflict`.
 
 ```toml
 [settings]
@@ -75,7 +75,6 @@ live = "~"            # where links/copies appear
 store = "~/dotfiles"  # where the real content lives
 mode = "symlink"      # symlink | sync (sync = independent copy)
 conflict = "backup"   # skip | replace (overwrite, no backup) | backup (.<timestamp>.bak)
-mirror = false        # only for mode = "sync": true also prunes files with no counterpart, following the "conflict" policy above
 
 [mappings.dotfiles.links]
 ".config/fish/config.fish" = ""              # "" or true: mirror the key under store
@@ -111,10 +110,9 @@ autocomplete and validation, and documents every field.
   and `-c <file>` (repeatable; replaces the usual config locations). There's no
   separate `init`; any command creates a default config if none exists.
 - In `sync` mode, `sync`/`deploy` copy only changed files (a size+mtime
-  quick-check, with mtime preserved on copy). Extra flags:
-  - `--delete` — prune destination files with no source counterpart (forces
-    `mirror` on for the run; off by default). Pruned paths are listed in the
-    output and under `--dry-run`.
+  quick-check, with mtime preserved on copy). They are **additive** — they never
+  delete, so if you remove a file from the source, delete the stale copy on the
+  other side yourself (`rm` / `git rm`). Extra flags:
   - `--checksum` — compare file content exactly instead of by size+mtime.
   - `--modify-window <SECONDS>` — treat mtimes within N seconds as equal, for
     coarse-granularity filesystems (default 0 = exact). `status` accepts

@@ -115,14 +115,7 @@ fn load_set(config: &[PathBuf]) -> symify_core::Result<(Vec<PathBuf>, ResolvedCo
 
 fn run_verb(verb: Verb, args: RunArgs) -> symify_core::Result<u8> {
     let (_, resolved) = load_set(&args.config)?;
-    let mut cfg = config::select(resolved, &args.mapping)?;
-    // `--delete` is a per-run config override: force mirror on for the selected
-    // mappings before planning, so the planner reads only ResolvedMapping.mirror.
-    if args.delete {
-        for m in &mut cfg.mappings {
-            m.mirror = true;
-        }
-    }
+    let cfg = config::select(resolved, &args.mapping)?;
     let opts = RunOptions {
         checksum: args.checksum,
         modify_window: args.modify_window,
@@ -422,7 +415,6 @@ mod tests {
             store: "/store".into(),
             mode: Mode::Symlink,
             conflict: Conflict::Backup,
-            mirror: false,
             links: vec![],
         }
     }

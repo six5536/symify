@@ -53,11 +53,6 @@
         }
       ]
     },
-    "Mirror": {
-      "title": "Mirror",
-      "description": "When true, sync mode prunes files on the destination side that no longer exist in the source (the same as passing `--delete`). Default false: only add or update files, never prune.",
-      "type": "boolean"
-    },
     "LinkValue": {
       "title": "LinkValue",
       "description": "A link entry value: \"\" or true mirrors the key under store; `<path>` is an explicit store path (relative to store, or absolute); false disables the entry.",
@@ -93,10 +88,6 @@
         "conflict": {
           "$ref": "#/$defs/Conflict",
           "description": "Default policy when the side being written already exists and differs."
-        },
-        "mirror": {
-          "$ref": "#/$defs/Mirror",
-          "description": "Default for whether sync mode prunes destination-only files."
         }
       }
     },
@@ -121,10 +112,6 @@
         "conflict": {
           "$ref": "#/$defs/Conflict",
           "description": "Conflict policy for this mapping (overrides settings.conflict)."
-        },
-        "mirror": {
-          "$ref": "#/$defs/Mirror",
-          "description": "Mirror/prune setting for this mapping (overrides settings.mirror)."
         },
         "links": {
           "type": "object",

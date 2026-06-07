@@ -15,16 +15,13 @@
 #[allow(missing_docs)]
 pub mod generated;
 
-pub use generated::{Config, Conflict, LinkValue, Mapping, Mirror, Mode, Settings};
+pub use generated::{Config, Conflict, LinkValue, Mapping, Mode, Settings};
 
 /// Default link mechanism when neither `[settings]` nor a mapping specifies one.
 pub const DEFAULT_MODE: Mode = Mode::Symlink;
 
 /// Default conflict policy: back up the overwritten file (safest).
 pub const DEFAULT_CONFLICT: Conflict = Conflict::Backup;
-
-/// Default mirror policy: off (additive — never prune destination-only files).
-pub const DEFAULT_MIRROR: bool = false;
 
 /// How a [`LinkValue`] resolves the store-side path for an entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

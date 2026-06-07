@@ -59,11 +59,6 @@ pub struct RunArgs {
     #[arg(short = 'y', long = "yes")]
     pub yes: bool,
 
-    /// In `sync` mode, prune destination files that no longer exist in the
-    /// source (forces `mirror` on for this run). Off by default.
-    #[arg(long)]
-    pub delete: bool,
-
     /// In `sync` mode, compare file content exactly instead of by size+mtime.
     #[arg(long)]
     pub checksum: bool,

@@ -68,10 +68,10 @@ struct RunEntryJson {
     detail: Option<String>,
     /// Files copied (`sync` mode).
     copied: usize,
-    /// Files backed up before overwrite/prune.
+    /// Files backed up before an overwrite.
     backed_up: usize,
-    /// Files/dirs removed (overwrite or mirror prune).
-    pruned: usize,
+    /// Files/dirs removed (overwrite or relink).
+    removed: usize,
     /// A residual `skip`-difference remains after applying.
     drift: bool,
 }
@@ -100,12 +100,12 @@ pub fn render_run<W: Write>(
 
     for (p, o) in planned.iter().zip(outcomes) {
         let (outcome, action, mut detail) = classify(o, &mut summary);
-        let (copied, backed_up, pruned) = count_ops(&p.action);
+        let (copied, backed_up, removed) = count_ops(&p.action);
         let drift = matches!(o, Outcome::AppliedDrift(_));
-        // For applied entries, surface the per-file counts (and prune visibility)
+        // For applied entries, surface the per-file counts (and removal visibility)
         // instead of a bare action word.
         if matches!(o, Outcome::Applied(_) | Outcome::AppliedDrift(_)) {
-            detail = count_detail(copied, backed_up, pruned, drift);
+            detail = count_detail(copied, backed_up, removed, drift);
         }
         entries.push(RunEntryJson {
             mapping: p.mapping.clone(),
@@ -118,7 +118,7 @@ pub fn render_run<W: Write>(
             detail,
             copied,
             backed_up,
-            pruned,
+            removed,
             drift,
         });
     }
@@ -204,27 +204,27 @@ fn symbol(outcome: &str) -> char {
     }
 }
 
-/// Tally an entry's ops into (copied, backed_up, pruned) for reporting.
+/// Tally an entry's ops into (copied, backed_up, removed) for reporting.
 fn count_ops(action: &Action) -> (usize, usize, usize) {
     let ops = match action {
         Action::Apply { ops, .. } | Action::ApplyDrift { ops, .. } => ops.as_slice(),
         _ => &[][..],
     };
-    let (mut copied, mut backed_up, mut pruned) = (0, 0, 0);
+    let (mut copied, mut backed_up, mut removed) = (0, 0, 0);
     for op in ops {
         match op {
             FsOp::Copy { .. } => copied += 1,
             FsOp::Backup(_) => backed_up += 1,
-            FsOp::Remove(_) => pruned += 1,
+            FsOp::Remove(_) => removed += 1,
             _ => {}
         }
     }
-    (copied, backed_up, pruned)
+    (copied, backed_up, removed)
 }
 
 /// Build the human detail string for an applied entry, e.g. `+2 ~1 -3, drift`.
 /// Returns `None` when there is nothing noteworthy (e.g. a plain link adopt).
-fn count_detail(copied: usize, backed_up: usize, pruned: usize, drift: bool) -> Option<String> {
+fn count_detail(copied: usize, backed_up: usize, removed: usize, drift: bool) -> Option<String> {
     let mut parts = Vec::new();
     if copied > 0 {
         parts.push(format!("+{copied}"));
@@ -232,8 +232,8 @@ fn count_detail(copied: usize, backed_up: usize, pruned: usize, drift: bool) -> 
     if backed_up > 0 {
         parts.push(format!("~{backed_up}"));
     }
-    if pruned > 0 {
-        parts.push(format!("-{pruned}"));
+    if removed > 0 {
+        parts.push(format!("-{removed}"));
     }
     let mut detail = parts.join(" ");
     if drift {
@@ -751,21 +751,21 @@ mod tests {
         let entries = v["entries"].as_array().unwrap();
         assert_eq!(entries.len(), 11);
 
-        // push: one copy + one backup, no prune.
+        // push: one copy + one backup, no removal.
         let push = entries.iter().find(|e| e["key"] == "push").unwrap();
         assert_eq!(push["outcome"], "applied");
         assert_eq!(push["action"], "push");
         assert_eq!(push["copied"], 1);
         assert_eq!(push["backed_up"], 1);
-        assert_eq!(push["pruned"], 0);
+        assert_eq!(push["removed"], 0);
         assert_eq!(push["drift"], false);
         assert_eq!(push["mode"], "sync");
 
-        // drifted: applied-drift carries copied + pruned and drift=true.
+        // drifted: applied-drift carries copied + removed and drift=true.
         let drifted = entries.iter().find(|e| e["key"] == "drifted").unwrap();
         assert_eq!(drifted["outcome"], "applied-drift");
         assert_eq!(drifted["copied"], 1);
-        assert_eq!(drifted["pruned"], 1);
+        assert_eq!(drifted["removed"], 1);
         assert_eq!(drifted["drift"], true);
 
         // Summary counts: 5 plain applied + 1 applied-drift = 6 changed; the
@@ -873,7 +873,6 @@ mod tests {
                 store: "/store/dots".into(),
                 mode: Mode::Symlink,
                 conflict: Conflict::Backup,
-                mirror: false,
                 links: vec![
                     (".bashrc".into(), LinkValue::Boolean(true)),
                     (".vimrc".into(), LinkValue::String("vim/vimrc".into())),

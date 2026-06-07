@@ -24,10 +24,9 @@ pub enum Verb {
 }
 
 /// Per-run options that influence planning but are not config: the `--checksum`
-/// and `--modify-window` CLI flags. `mirror` is *not* here — it lives on the
-/// resolved mapping (a `--delete` flag is applied as a config override before
-/// planning). Shared by [`plan()`] and [`status()`](crate::status::status) so a
-/// status report matches what a run would decide.
+/// and `--modify-window` CLI flags. Shared by [`plan()`] and
+/// [`status()`](crate::status::status) so a status report matches what a run
+/// would decide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RunOptions {
     /// Force an exact content compare instead of the size+mtime quick-check.
@@ -378,7 +377,7 @@ fn plan_sync(s: &Path, d: &Path, m: &ResolvedMapping, opts: RunOptions) -> Resul
     let s_state = fs::inspect(s)?;
     match m.mode {
         Mode::Symlink => plan_sync_link(s, d, m.conflict, s_state),
-        Mode::Sync => plan_sync_copy(s, d, m.conflict, s_state, opts, m.mirror),
+        Mode::Sync => plan_sync_copy(s, d, m.conflict, s_state, opts),
     }
 }
 
@@ -425,13 +424,12 @@ fn plan_sync_copy(
     conflict: Conflict,
     s_state: NodeKind,
     opts: RunOptions,
-    mirror: bool,
 ) -> Result<Action> {
     if s_state.is_missing() {
         return Ok(Action::Skip("live path missing — nothing to capture"));
     }
-    // sync copies live (s) → store (d), pruning store-only entries when mirror.
-    diff_copy(s, d, conflict, mirror, opts, ActionKind::Push)
+    // sync copies live (s) → store (d), adding and updating (never pruning).
+    diff_copy(s, d, conflict, opts, ActionKind::Push)
 }
 
 // ----- deploy (store -> live) -------------------------------------------
@@ -442,7 +440,7 @@ fn plan_deploy(s: &Path, d: &Path, m: &ResolvedMapping, opts: RunOptions) -> Res
     }
     match m.mode {
         Mode::Symlink => plan_deploy_link(s, d, m.conflict),
-        Mode::Sync => plan_deploy_copy(s, d, m.conflict, opts, m.mirror),
+        Mode::Sync => plan_deploy_copy(s, d, m.conflict, opts),
     }
 }
 
@@ -482,32 +480,25 @@ fn plan_deploy_link(s: &Path, d: &Path, conflict: Conflict) -> Result<Action> {
     }
 }
 
-fn plan_deploy_copy(
-    s: &Path,
-    d: &Path,
-    conflict: Conflict,
-    opts: RunOptions,
-    mirror: bool,
-) -> Result<Action> {
-    // deploy copies store (d) → live (s), pruning live-only entries when mirror.
-    diff_copy(d, s, conflict, mirror, opts, ActionKind::Pull)
+fn plan_deploy_copy(s: &Path, d: &Path, conflict: Conflict, opts: RunOptions) -> Result<Action> {
+    // deploy copies store (d) → live (s), adding and updating (never pruning).
+    diff_copy(d, s, conflict, opts, ActionKind::Pull)
 }
 
 /// Diff a `sync`-mode entry's `src` against `dst` and decide its [`Action`]:
-/// walk per-file, emitting `Copy`/`Backup`/`Remove` ops only where they differ,
-/// pruning `dst`-only entries when `mirror` is set. Aggregates an unresolved
-/// `skip`-difference into the drift-bearing outcome.
+/// walk per-file, emitting `Copy`/`Backup`/`Remove` ops only where they differ
+/// (additive — destination-only entries are left untouched). Aggregates an
+/// unresolved `skip`-difference into the drift-bearing outcome.
 fn diff_copy(
     src: &Path,
     dst: &Path,
     conflict: Conflict,
-    mirror: bool,
     opts: RunOptions,
     kind: ActionKind,
 ) -> Result<Action> {
     let mut ops = Vec::new();
     let mut drift = false;
-    walk_copy(src, dst, conflict, mirror, opts, &mut ops, &mut drift)?;
+    walk_copy(src, dst, conflict, opts, &mut ops, &mut drift)?;
     Ok(if ops.is_empty() {
         if drift {
             Action::Conflict
@@ -522,14 +513,13 @@ fn diff_copy(
 }
 
 /// Recursive worker for [`diff_copy`]. `src` is known to exist. Emits copy/backup
-/// ops for changed source entries (before any prunes, for readable output) and,
-/// when `mirror`, prune ops for `dst`-only entries. Sets `drift` when a
-/// `conflict = skip` difference is left unresolved.
+/// ops for changed source entries; additive, so destination-only entries are
+/// left untouched. Sets `drift` when a `conflict = skip` difference is left
+/// unresolved.
 fn walk_copy(
     src: &Path,
     dst: &Path,
     conflict: Conflict,
-    mirror: bool,
     opts: RunOptions,
     ops: &mut Vec<FsOp>,
     drift: &mut bool,
@@ -542,25 +532,9 @@ fn walk_copy(
 
     let both_dirs = fs::inspect(src)? == NodeKind::Dir && fs::inspect(dst)? == NodeKind::Dir;
     if both_dirs {
-        let src_names = fs::dir_entries(src)?;
-        let dst_names = fs::dir_entries(dst)?;
-        // Source entries: add or update (recursing — copies emitted first).
-        for name in &src_names {
-            walk_copy(
-                &src.join(name),
-                &dst.join(name),
-                conflict,
-                mirror,
-                opts,
-                ops,
-                drift,
-            )?;
-        }
-        // Destination-only entries: prune when mirror is on.
-        if mirror {
-            for name in dst_names.difference(&src_names) {
-                prune(&dst.join(name), conflict, ops, drift);
-            }
+        // Source entries: add or update (recursing — additive, never prunes).
+        for name in &fs::dir_entries(src)? {
+            walk_copy(&src.join(name), &dst.join(name), conflict, opts, ops, drift)?;
         }
         return Ok(());
     }
@@ -582,16 +556,6 @@ fn walk_copy(
         }
     }
     Ok(())
-}
-
-/// Dispose of a destination-only entry under mirror, per the conflict policy:
-/// `skip` leaves it (drift), `backup` renames it to `.bak`, `replace` deletes it.
-fn prune(path: &Path, conflict: Conflict, ops: &mut Vec<FsOp>, drift: &mut bool) {
-    match conflict {
-        Conflict::Skip => *drift = true,
-        Conflict::Backup => ops.push(FsOp::Backup(path.to_path_buf())),
-        Conflict::Replace => ops.push(FsOp::Remove(path.to_path_buf())),
-    }
 }
 
 fn mv(from: &Path, to: &Path) -> FsOp {
@@ -660,7 +624,6 @@ mod tests {
                     store: self.store.clone(),
                     mode,
                     conflict,
-                    mirror: false,
                     links: links.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
                 }],
             }
@@ -897,7 +860,7 @@ mod tests {
             .unwrap();
     }
 
-    /// Build an in-sync `store` mirror of two live files, with matching mtimes,
+    /// Build an in-sync `store` copy of two live files, with matching mtimes,
     /// so a follow-up `sync` sees the tree as already captured.
     fn synced_dir(fx: &Fx) {
         for f in ["dir/a", "dir/b"] {
@@ -905,11 +868,6 @@ mod tests {
             fx.write(&fx.sp(f), f.as_bytes());
             match_mtime(&fx.lp(f), &fx.sp(f));
         }
-    }
-
-    fn with_mirror(mut c: ResolvedConfig) -> ResolvedConfig {
-        c.mappings[0].mirror = true;
-        c
     }
 
     #[test]
@@ -1000,11 +958,11 @@ mod tests {
     }
 
     #[test]
-    fn sync_mirror_off_leaves_extraneous_store_file() {
+    fn sync_leaves_extraneous_store_file_untouched() {
         let fx = Fx::new();
         synced_dir(&fx);
         fx.write(&fx.sp("dir/extra"), b"orphan"); // store-only, no live counterpart
-        // mirror off (default): not pruned, nothing to do.
+        // Additive: store-only files are never pruned — nothing to do.
         assert_eq!(
             act(
                 &fx.cfg(Mode::Sync, Conflict::Replace, vec![("dir", t())]),
@@ -1015,70 +973,14 @@ mod tests {
     }
 
     #[test]
-    fn sync_mirror_on_prunes_extraneous_per_conflict() {
-        let fx = Fx::new();
-        synced_dir(&fx);
-        fx.write(&fx.sp("dir/extra"), b"orphan");
-        // replace → hard delete the orphan.
-        assert_eq!(
-            act(
-                &with_mirror(fx.cfg(Mode::Sync, Conflict::Replace, vec![("dir", t())])),
-                Verb::Sync
-            ),
-            Action::Apply {
-                kind: ActionKind::Push,
-                ops: vec![FsOp::Remove(fx.sp("dir/extra"))],
-            }
-        );
-        // backup → rename the orphan to `.bak`.
-        assert_eq!(
-            act(
-                &with_mirror(fx.cfg(Mode::Sync, Conflict::Backup, vec![("dir", t())])),
-                Verb::Sync
-            ),
-            Action::Apply {
-                kind: ActionKind::Push,
-                ops: vec![FsOp::Backup(fx.sp("dir/extra"))],
-            }
-        );
-        // skip → leave it, report drift.
-        assert_eq!(
-            act(
-                &with_mirror(fx.cfg(Mode::Sync, Conflict::Skip, vec![("dir", t())])),
-                Verb::Sync
-            ),
-            Action::Conflict
-        );
-    }
-
-    #[test]
-    fn deploy_mirror_prunes_live_not_store() {
-        // Direction guard: deploy copies store→live, so mirror must prune the
-        // LIVE side (a src/dst swap would wrongly prune the store).
-        let fx = Fx::new();
-        synced_dir(&fx);
-        fx.write(&fx.lp("dir/extra"), b"live-only");
-        assert_eq!(
-            act(
-                &with_mirror(fx.cfg(Mode::Sync, Conflict::Replace, vec![("dir", t())])),
-                Verb::Deploy,
-            ),
-            Action::Apply {
-                kind: ActionKind::Pull,
-                ops: vec![FsOp::Remove(fx.lp("dir/extra"))],
-            }
-        );
-    }
-
-    #[test]
     fn sync_ignores_own_bak_artifacts() {
-        // Decision #2: a `.bak` on the store side is never pruned, even with mirror.
+        // A `.bak` artifact is invisible to the walk — never copied as a source add.
         let fx = Fx::new();
         synced_dir(&fx);
-        fx.write(&fx.sp("dir/old.20260101.bak"), b"backup");
+        fx.write(&fx.lp("dir/old.20260101.bak"), b"backup");
         assert_eq!(
             act(
-                &with_mirror(fx.cfg(Mode::Sync, Conflict::Replace, vec![("dir", t())])),
+                &fx.cfg(Mode::Sync, Conflict::Backup, vec![("dir", t())]),
                 Verb::Sync
             ),
             Action::AlreadyOk
@@ -1319,7 +1221,6 @@ mod tests {
                 live,
                 mode: Mode::Symlink,
                 conflict: Conflict::Backup,
-                mirror: false,
                 links: vec![("sub".to_string(), t())],
             }],
         };

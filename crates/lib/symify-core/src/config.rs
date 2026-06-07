@@ -10,10 +10,10 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::model::{Config, Conflict, LinkValue, Mapping, Mode, Settings};
-use crate::model::{DEFAULT_CONFLICT, DEFAULT_MIRROR, DEFAULT_MODE};
+use crate::model::{DEFAULT_CONFLICT, DEFAULT_MODE};
 
 /// A fully resolved configuration: every mapping has concrete absolute roots and
-/// effective `mode`/`conflict`/`mirror`, ready for planning.
+/// effective `mode`/`conflict`, ready for planning.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedConfig {
     /// Mappings, sorted by name for deterministic output.
@@ -33,8 +33,6 @@ pub struct ResolvedMapping {
     pub mode: Mode,
     /// Effective conflict policy.
     pub conflict: Conflict,
-    /// Effective mirror policy (prune destination-only files in `sync` mode).
-    pub mirror: bool,
     /// Link entries, sorted by key for deterministic output.
     pub links: Vec<(String, LinkValue)>,
 }
@@ -233,7 +231,6 @@ fn merge_settings(base: Option<Settings>, overlay: Option<Settings>) -> Option<S
             store: o.store.or(b.store),
             mode: o.mode.or(b.mode),
             conflict: o.conflict.or(b.conflict),
-            mirror: o.mirror.or(b.mirror),
         }),
     }
 }
@@ -261,7 +258,6 @@ fn merge_mapping(base: Mapping, overlay: Mapping) -> Mapping {
         store: overlay.store.or(base.store),
         mode: overlay.mode.or(base.mode),
         conflict: overlay.conflict.or(base.conflict),
-        mirror: overlay.mirror.or(base.mirror),
         links,
     }
 }
@@ -297,12 +293,6 @@ pub fn resolve(config: Config) -> Result<ResolvedConfig> {
 
         let mode = m.mode.or(settings.mode).unwrap_or(DEFAULT_MODE);
         let conflict = m.conflict.or(settings.conflict).unwrap_or(DEFAULT_CONFLICT);
-        let mirror = m
-            .mirror
-            .clone()
-            .or_else(|| settings.mirror.clone())
-            .map(bool::from)
-            .unwrap_or(DEFAULT_MIRROR);
 
         let mut links: Vec<(String, LinkValue)> = m
             .links
@@ -326,7 +316,6 @@ pub fn resolve(config: Config) -> Result<ResolvedConfig> {
             store,
             mode,
             conflict,
-            mirror,
             links,
         });
     }
@@ -435,28 +424,6 @@ mod tests {
             err.to_string().contains("hardlink") || err.to_string().contains("unknown variant"),
             "expected a clear rejection, got: {err}"
         );
-    }
-
-    #[test]
-    fn mirror_resolves_with_precedence_and_default() {
-        // default off
-        let r = resolve(cfg(
-            "[mappings.a]\nlive=\"/l\"\nstore=\"/s\"\n[mappings.a.links]\nx=true",
-        ))
-        .unwrap();
-        assert!(!r.mappings[0].mirror);
-        // settings on, mapping inherits
-        let r = resolve(cfg(
-            "[settings]\nlive=\"/l\"\nstore=\"/s\"\nmirror=true\n[mappings.a.links]\nx=true",
-        ))
-        .unwrap();
-        assert!(r.mappings[0].mirror);
-        // mapping overrides settings
-        let r = resolve(cfg(
-            "[settings]\nlive=\"/l\"\nstore=\"/s\"\nmirror=true\n[mappings.a]\nmirror=false\n[mappings.a.links]\nx=true",
-        ))
-        .unwrap();
-        assert!(!r.mappings[0].mirror);
     }
 
     #[test]

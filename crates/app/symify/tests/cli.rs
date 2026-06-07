@@ -353,28 +353,6 @@ fn destructive_replace_is_gated_then_proceeds_with_yes() {
     assert!(!fx.sp("d/other").exists());
 }
 
-#[test]
-fn mirror_prune_of_nonempty_dir_is_gated() {
-    // sync mode + --delete where the store holds an extraneous non-empty dir =>
-    // the prune recursively deletes it (unrecoverable) and must be confirmed.
-    let fx = Fx::sync("replace", &["\"conf\" = true"]);
-    fx.write(&fx.lp("conf/keep"), b"k");
-    fx.cmd("sync").assert().success(); // capture
-    fx.write(&fx.sp("conf/extra/nested"), b"x"); // store-only non-empty dir
-
-    // Non-interactive + no --yes => refused, the dir survives.
-    fx.cmd("sync").arg("--delete").assert().code(2);
-    assert!(fx.sp("conf/extra/nested").exists());
-
-    // --yes pre-approves the recursive prune.
-    fx.cmd("sync")
-        .arg("--delete")
-        .arg("--yes")
-        .assert()
-        .success();
-    assert!(!fx.sp("conf/extra").exists());
-}
-
 // ----- mapping scoping --------------------------------------------------
 
 #[test]
@@ -433,7 +411,7 @@ fn auto_init_with_json_keeps_stdout_clean() {
         .unwrap_or_else(|e| panic!("stdout not clean JSON ({e}): {stdout}"));
 }
 
-// ----- sync (copy) mode: incremental, mirror, checksum ------------------
+// ----- sync (copy) mode: incremental, checksum -------------------------
 
 #[test]
 fn sync_copy_touches_only_changed_files() {
@@ -466,31 +444,6 @@ fn sync_copy_touches_only_changed_files() {
         .modified()
         .unwrap();
     assert_eq!(before_a, after_a, "unchanged file must not be recopied");
-}
-
-#[test]
-fn sync_delete_prunes_only_with_flag() {
-    let fx = Fx::sync("replace", &["\"conf\" = true"]);
-    fx.write(&fx.lp("conf/keep"), b"k");
-    fx.cmd("sync").assert().success();
-    // Create a store-only orphan (no live counterpart).
-    fx.write(&fx.sp("conf/orphan"), b"o");
-
-    // Default: orphan is left untouched.
-    fx.cmd("sync").assert().success();
-    assert!(
-        fx.sp("conf/orphan").exists(),
-        "orphan kept without --delete"
-    );
-
-    // --delete: orphan is pruned and listed.
-    let out = fx.cmd("sync").arg("--delete").assert().success();
-    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
-    assert!(
-        !fx.sp("conf/orphan").exists(),
-        "orphan pruned with --delete"
-    );
-    assert!(stdout.contains("-1"), "prune count shown: {stdout}");
 }
 
 #[test]

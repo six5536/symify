@@ -46,7 +46,6 @@ impl Fx {
                 store: self.store.clone(),
                 mode,
                 conflict,
-                mirror: false,
                 links: links
                     .iter()
                     .map(|(k, v)| (k.to_string(), v.clone()))

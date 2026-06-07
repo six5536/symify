@@ -233,10 +233,6 @@ impl ::std::convert::From<bool> for LinkValue {
 #[doc = "      \"description\": \"Working location for this mapping (overrides settings.live).\","]
 #[doc = "      \"type\": \"string\""]
 #[doc = "    },"]
-#[doc = "    \"mirror\": {"]
-#[doc = "      \"description\": \"Mirror/prune setting for this mapping (overrides settings.mirror).\","]
-#[doc = "      \"$ref\": \"#/$defs/Mirror\""]
-#[doc = "    },"]
 #[doc = "    \"mode\": {"]
 #[doc = "      \"description\": \"Link mechanism for this mapping (overrides settings.mode).\","]
 #[doc = "      \"$ref\": \"#/$defs/Mode\""]
@@ -265,9 +261,6 @@ pub struct Mapping {
     #[doc = "Working location for this mapping (overrides settings.live)."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub live: ::std::option::Option<::std::string::String>,
-    #[doc = "Mirror/prune setting for this mapping (overrides settings.mirror)."]
-    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-    pub mirror: ::std::option::Option<Mirror>,
     #[doc = "Link mechanism for this mapping (overrides settings.mode)."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub mode: ::std::option::Option<Mode>,
@@ -281,64 +274,9 @@ impl ::std::default::Default for Mapping {
             conflict: Default::default(),
             links: Default::default(),
             live: Default::default(),
-            mirror: Default::default(),
             mode: Default::default(),
             store: Default::default(),
         }
-    }
-}
-#[doc = "When true, sync mode prunes files on the destination side that no longer exist in the source (the same as passing `--delete`). Default false: only add or update files, never prune."]
-#[doc = r""]
-#[doc = r" <details><summary>JSON schema</summary>"]
-#[doc = r""]
-#[doc = r" ```json"]
-#[doc = "{"]
-#[doc = "  \"title\": \"Mirror\","]
-#[doc = "  \"description\": \"When true, sync mode prunes files on the destination side that no longer exist in the source (the same as passing `--delete`). Default false: only add or update files, never prune.\","]
-#[doc = "  \"type\": \"boolean\""]
-#[doc = "}"]
-#[doc = r" ```"]
-#[doc = r" </details>"]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Eq, PartialEq)]
-#[serde(transparent)]
-pub struct Mirror(pub bool);
-impl ::std::ops::Deref for Mirror {
-    type Target = bool;
-    fn deref(&self) -> &bool {
-        &self.0
-    }
-}
-impl ::std::convert::From<Mirror> for bool {
-    fn from(value: Mirror) -> Self {
-        value.0
-    }
-}
-impl ::std::convert::From<bool> for Mirror {
-    fn from(value: bool) -> Self {
-        Self(value)
-    }
-}
-impl ::std::str::FromStr for Mirror {
-    type Err = <bool as ::std::str::FromStr>::Err;
-    fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
-        Ok(Self(value.parse()?))
-    }
-}
-impl ::std::convert::TryFrom<&str> for Mirror {
-    type Error = <bool as ::std::str::FromStr>::Err;
-    fn try_from(value: &str) -> ::std::result::Result<Self, Self::Error> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<String> for Mirror {
-    type Error = <bool as ::std::str::FromStr>::Err;
-    fn try_from(value: String) -> ::std::result::Result<Self, Self::Error> {
-        value.parse()
-    }
-}
-impl ::std::fmt::Display for Mirror {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        self.0.fmt(f)
     }
 }
 #[doc = "Link mechanism."]
@@ -441,10 +379,6 @@ impl ::std::convert::TryFrom<::std::string::String> for Mode {
 #[doc = "      \"description\": \"Working location where links/copies appear (e.g. \\\"~\\\").\","]
 #[doc = "      \"type\": \"string\""]
 #[doc = "    },"]
-#[doc = "    \"mirror\": {"]
-#[doc = "      \"description\": \"Default for whether sync mode prunes destination-only files.\","]
-#[doc = "      \"$ref\": \"#/$defs/Mirror\""]
-#[doc = "    },"]
 #[doc = "    \"mode\": {"]
 #[doc = "      \"description\": \"Default link mechanism for all mappings.\","]
 #[doc = "      \"$ref\": \"#/$defs/Mode\""]
@@ -467,9 +401,6 @@ pub struct Settings {
     #[doc = "Working location where links/copies appear (e.g. \"~\")."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub live: ::std::option::Option<::std::string::String>,
-    #[doc = "Default for whether sync mode prunes destination-only files."]
-    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-    pub mirror: ::std::option::Option<Mirror>,
     #[doc = "Default link mechanism for all mappings."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub mode: ::std::option::Option<Mode>,
@@ -482,7 +413,6 @@ impl ::std::default::Default for Settings {
         Self {
             conflict: Default::default(),
             live: Default::default(),
-            mirror: Default::default(),
             mode: Default::default(),
             store: Default::default(),
         }

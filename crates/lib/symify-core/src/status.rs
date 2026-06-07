@@ -170,7 +170,6 @@ mod tests {
                     store: self.store.clone(),
                     mode,
                     conflict: Conflict::Backup,
-                    mirror: false,
                     links: links.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
                 }],
             }

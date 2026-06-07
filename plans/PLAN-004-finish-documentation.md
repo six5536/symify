@@ -241,10 +241,14 @@ Grouped; exact set depends on the grilled answers above.
 
 ## Findings (surfaced while documenting)
 
-One **behavior** finding (deferred — needs a code fix, not a docs change) and
-several docs-lagging-code fixes corrected in-place.
+One **behavior** finding (resolved in PLAN-005) and several docs-lagging-code
+fixes corrected in-place.
 
-**Deferred (safety):** `mirror = true` does not protect `.git` or other
+**Resolved in PLAN-005** — the `mirror` setting and `--delete` flag were removed,
+making `sync` additive (it never deletes files you didn't list), which
+eliminates this risk entirely. The original finding follows for the record.
+
+**Original finding (safety):** `mirror = true` did not protect `.git` or other
 repository metadata when pruning. In a `sync`-mode directory entry, any path on
 the destination side with no source counterpart is pruned via `prune()`, and
 `fs::dir_entries` filters only symify's own artifacts (`*.bak`,
