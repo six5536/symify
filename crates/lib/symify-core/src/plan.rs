@@ -26,8 +26,8 @@ pub enum Verb {
 /// Per-run options that influence planning but are not config: the `--checksum`
 /// and `--modify-window` CLI flags. `mirror` is *not* here — it lives on the
 /// resolved mapping (a `--delete` flag is applied as a config override before
-/// planning). Shared by [`plan`] and [`status`] so a status report matches what a
-/// run would decide.
+/// planning). Shared by [`plan()`] and [`status()`](crate::status::status) so a
+/// status report matches what a run would decide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RunOptions {
     /// Force an exact content compare instead of the size+mtime quick-check.
@@ -147,6 +147,13 @@ pub struct Planned {
 }
 
 /// Plan a run over the whole resolved config.
+///
+/// ```no_run
+/// use symify_core::{config, plan, RunOptions, Verb};
+/// let resolved = config::load_config(&[])?;
+/// let planned = plan::plan(&resolved, Verb::Deploy, RunOptions::default())?;
+/// # Ok::<(), symify_core::Error>(())
+/// ```
 pub fn plan(config: &ResolvedConfig, verb: Verb, opts: RunOptions) -> Result<Vec<Planned>> {
     let mut out = Vec::new();
     for mapping in &config.mappings {
@@ -193,6 +200,15 @@ impl Outcome {
 /// Execute planned entries in order, continuing past failures (each entry is
 /// independent — there is no rollback). Under `dry_run` nothing is mutated and
 /// `Apply` entries report `Applied` as if they had run.
+///
+/// ```no_run
+/// use symify_core::{config, plan, RunOptions, Verb};
+/// use symify_core::clock::SystemClock;
+/// let resolved = config::load_config(&[])?;
+/// let planned = plan::plan(&resolved, Verb::Sync, RunOptions::default())?;
+/// let outcomes = plan::execute(&planned, &SystemClock, false);
+/// # Ok::<(), symify_core::Error>(())
+/// ```
 pub fn execute(planned: &[Planned], clock: &dyn Clock, dry_run: bool) -> Vec<Outcome> {
     planned
         .iter()
@@ -314,7 +330,7 @@ pub(crate) fn guard_reason(m: &ResolvedMapping, s: &Path, d: &Path) -> Result<Op
 }
 
 /// Resolve an entry's absolute `(live, store)` paths from its key and value.
-/// Public wrapper over [`resolve_paths`] for callers like `list`.
+/// Public wrapper over the internal `resolve_paths` for callers like `list`.
 pub fn entry_paths(m: &ResolvedMapping, key: &str, value: &LinkValue) -> (PathBuf, PathBuf) {
     resolve_paths(m, key, value.kind())
 }

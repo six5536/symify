@@ -3,6 +3,7 @@
 // the attribute used to exclude genuinely untestable glue from coverage. Inert on
 // the stable toolchain used for normal builds and tests.
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+#![warn(missing_docs)]
 
 mod cli;
 mod confirm;

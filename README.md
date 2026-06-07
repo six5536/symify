@@ -95,6 +95,9 @@ For path resolution rules, the per-entry state machine, and the full design, see
 | `deploy`         | `store` → `live` | Set a machine up from the store.                   |
 | `status`         | read-only        | Report the state of each entry.                    |
 
+- `symify <path>` is shorthand for `symify add <path>` — adding is the common
+  case. (A path named like a verb, e.g. `status`, is read as that verb; use
+  `symify add status` to disambiguate.)
 - `add`/`remove` take `-m <mapping>` (defaults to your sole mapping) and edit the
   config in place, preserving comments. `remove --no-restore` leaves the link.
 - `sync`/`deploy`/`status`/`list` take `-m <mapping>` (repeatable) to act on
@@ -112,7 +115,8 @@ For path resolution rules, the per-entry state machine, and the full design, see
     coarse-granularity filesystems (default 0 = exact). `status` accepts
     `--checksum`/`--modify-window` too, so its report matches a run.
 
-Run `symify <command> --help` for the full reference and exit codes.
+Run `symify <command> --help` for the full reference and exit codes, or
+`symify -V` for the version.
 
 ## Safety
 
@@ -130,15 +134,32 @@ symify can move and delete files, so it holds itself to a few rules:
   `-y`/`--yes` to skip the prompt, which is required when output isn't a
   terminal (pipes, `--json`, CI). The default `backup` policy never deletes.
 
+To report a security issue, see [SECURITY.md](SECURITY.md).
+
+## Backups & history
+
+symify deliberately isn't a backup tool. Its only safety net is the
+`<name>.<timestamp>.bak` it writes before overwriting a file under
+`conflict = "backup"` — not snapshot rotation or point-in-time recovery.
+
+For real history, lean on the store: keep `~/dotfiles` under **git** and commit
+after a `sync` — `git log` gives you full, dedup'd, pushable history for free.
+If your store isn't a git repo, point a dedicated backup tool
+([restic](https://restic.net/), [borg](https://www.borgbackup.org/)) at it.
+
 ## Development
 
 Toolchains are pinned in `.mise.toml` and `rust-toolchain.toml` (managed with
 [mise](https://mise.jdx.dev/)).
 
 ```sh
-npm run build    # cargo build --workspace
-npm run test     # cargo nextest run --workspace
-npm run lint     # cargo clippy --workspace
-npm run fmt      # cargo fmt --all
-npm run codegen  # regenerate the Rust config model from the JSON Schema
+npm run build           # cargo build --workspace
+npm run test            # cargo nextest run --workspace
+npm run lint            # cargo clippy --workspace
+npm run fmt             # cargo fmt --all
+npm run codegen         # regenerate the Rust config model from the JSON Schema
+npm run coverage:check  # enforce the per-crate coverage gate
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full setup, the test layers, the
+schema/codegen workflow, and how releases are cut.

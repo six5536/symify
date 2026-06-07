@@ -93,7 +93,8 @@ pub struct QueryArgs {
     #[arg(long)]
     pub checksum: bool,
 
-    /// In `sync` mode, treat mtimes within this many seconds as equal. Default 0.
+    /// In `sync` mode, treat mtimes within this many seconds as equal (for
+    /// coarse-granularity filesystems). Default 0 (exact).
     #[arg(long, value_name = "SECONDS", default_value_t = 0)]
     pub modify_window: u64,
 

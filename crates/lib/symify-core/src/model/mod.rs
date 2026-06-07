@@ -5,8 +5,14 @@
 //! them and adds hand-written ergonomics (defaults, [`LinkValue`] interpretation)
 //! that the generator can't express.
 
+/// Types generated from `schema/symify.schema.json` by `cargo typify`
+/// (regenerate with `npm run codegen`). Field and variant docs come from the
+/// schema's `description`s. The `missing_docs` allow covers only what typify
+/// cannot document — the two untagged [`LinkValue`] `oneOf` arms (`String` /
+/// `Boolean`) — since per-item attributes can't be placed in generated code.
 #[rustfmt::skip]
 #[allow(clippy::all)]
+#[allow(missing_docs)]
 pub mod generated;
 
 pub use generated::{Config, Conflict, LinkValue, Mapping, Mirror, Mode, Settings};

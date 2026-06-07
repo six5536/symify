@@ -49,6 +49,14 @@ jobs:
       - name: Test
         run: cargo nextest run --workspace
 
+      - name: Doctests
+        run: cargo test --doc --workspace
+
+      - name: Docs (warnings as errors)
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
       - name: Launcher test
         run: node --test packages/symify/test/*.test.js
 

@@ -63,6 +63,13 @@ pub struct StatusEntry {
 }
 
 /// Report the status of every entry in the resolved config.
+///
+/// ```no_run
+/// use symify_core::{config, RunOptions};
+/// let resolved = config::load_config(&[])?;
+/// let entries = symify_core::status::status(&resolved, RunOptions::default())?;
+/// # Ok::<(), symify_core::Error>(())
+/// ```
 pub fn status(config: &ResolvedConfig, opts: RunOptions) -> Result<Vec<StatusEntry>> {
     let mut out = Vec::new();
     for m in &config.mappings {

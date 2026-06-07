@@ -317,6 +317,7 @@ flag is the safety boundary, and pruned paths are listed in the output.
 ## CLI surface
 
 ```
+symify <path>          shortcut for `symify add <path> …` (see below)
 symify add    <path>   [-m MAP] [--store-path P] [-c FILE]... [--force] [--dry-run] [-y] [--json]
 symify remove <path>   [-m MAP] [-c FILE]... [--no-restore] [--dry-run] [--json]   (alias: rm)
 symify list            [-m MAP]... [-c FILE]... [--entries] [--json]               (alias: ls)
@@ -325,11 +326,21 @@ symify deploy          [-m MAP]... [-c FILE]... [--dry-run] [-y] [--delete] [--c
 symify status          [-m MAP]... [-c FILE]... [--checksum] [--modify-window N] [--json]
 
 Global: --allow-root  (permit mutating verbs to run as root; refused otherwise)
+        -V, --version (print the bare version number and exit)
+
+Bare `symify` (no command) prints help and exits 0.
 ```
 
 - The only positional is `<path>` on `add`/`remove` — a real filesystem path
   (CWD-relative / `~` / absolute) from which the config key is derived
   (relativized against the mapping's `live`; an absolute key if outside it).
+- **Bare-path shortcut.** `symify <path> …` is rewritten to `symify add <path> …`,
+  since adding is the common case. The `add` is inserted before the first non-flag
+  token unless that token is a known subcommand or alias; a leading `--` disables
+  the rewrite. So `symify status` is still the `status` verb — use `symify add
+  status` to track a file literally named `status`.
+- `-V, --version` — global; prints the bare version number (just `x.y.z`, for
+  scripts) and exits.
 - `-m, --mapping` — repeatable filter on the run/query verbs (omit = all);
   a single value on `add`/`remove` defaulting to the sole mapping. Unknown name:
   `add` creates the mapping, every other verb errors.

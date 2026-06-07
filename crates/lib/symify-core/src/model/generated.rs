@@ -48,6 +48,7 @@ pub mod error {
 #[doc = "      }"]
 #[doc = "    },"]
 #[doc = "    \"settings\": {"]
+#[doc = "      \"description\": \"Defaults applied to every mapping (each mapping may override them).\","]
 #[doc = "      \"$ref\": \"#/$defs/Settings\""]
 #[doc = "    }"]
 #[doc = "  },"]
@@ -64,6 +65,7 @@ pub struct Config {
         skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
     )]
     pub mappings: ::std::collections::HashMap<::std::string::String, Mapping>,
+    #[doc = "Defaults applied to every mapping (each mapping may override them)."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub settings: ::std::option::Option<Settings>,
 }
@@ -84,10 +86,19 @@ impl ::std::default::Default for Config {
 #[doc = "  \"title\": \"Conflict\","]
 #[doc = "  \"description\": \"What to do when the side being written already exists and differs.\","]
 #[doc = "  \"type\": \"string\","]
-#[doc = "  \"enum\": ["]
-#[doc = "    \"skip\","]
-#[doc = "    \"replace\","]
-#[doc = "    \"backup\""]
+#[doc = "  \"oneOf\": ["]
+#[doc = "    {"]
+#[doc = "      \"description\": \"Leave the existing file and report the conflict (counts as drift).\","]
+#[doc = "      \"const\": \"skip\""]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"description\": \"Delete the existing file, then write (no backup).\","]
+#[doc = "      \"const\": \"replace\""]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"description\": \"Rename the existing file to `<name>.<timestamp>.bak`, then write.\","]
+#[doc = "      \"const\": \"backup\""]
+#[doc = "    }"]
 #[doc = "  ]"]
 #[doc = "}"]
 #[doc = r" ```"]
@@ -105,10 +116,13 @@ impl ::std::default::Default for Config {
     PartialOrd,
 )]
 pub enum Conflict {
+    #[doc = "Leave the existing file and report the conflict (counts as drift)."]
     #[serde(rename = "skip")]
     Skip,
+    #[doc = "Delete the existing file, then write (no backup)."]
     #[serde(rename = "replace")]
     Replace,
+    #[doc = "Rename the existing file to `<name>.<timestamp>.bak`, then write."]
     #[serde(rename = "backup")]
     Backup,
 }
@@ -154,19 +168,21 @@ impl ::std::convert::TryFrom<::std::string::String> for Conflict {
         value.parse()
     }
 }
-#[doc = "A link entry value: \"\" or true mirrors the key under store; \"<path>\" is an explicit store path (relative to store, or absolute); false disables the entry."]
+#[doc = "A link entry value: \"\" or true mirrors the key under store; `<path>` is an explicit store path (relative to store, or absolute); false disables the entry."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
 #[doc = r" ```json"]
 #[doc = "{"]
 #[doc = "  \"title\": \"LinkValue\","]
-#[doc = "  \"description\": \"A link entry value: \\\"\\\" or true mirrors the key under store; \\\"<path>\\\" is an explicit store path (relative to store, or absolute); false disables the entry.\","]
+#[doc = "  \"description\": \"A link entry value: \\\"\\\" or true mirrors the key under store; `<path>` is an explicit store path (relative to store, or absolute); false disables the entry.\","]
 #[doc = "  \"oneOf\": ["]
 #[doc = "    {"]
+#[doc = "      \"description\": \"An explicit store path (relative to store, or absolute); \\\"\\\" mirrors the key under store.\","]
 #[doc = "      \"type\": \"string\""]
 #[doc = "    },"]
 #[doc = "    {"]
+#[doc = "      \"description\": \"true mirrors the key under store; false disables the entry.\","]
 #[doc = "      \"type\": \"boolean\""]
 #[doc = "    }"]
 #[doc = "  ]"]
@@ -203,6 +219,7 @@ impl ::std::convert::From<bool> for LinkValue {
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"properties\": {"]
 #[doc = "    \"conflict\": {"]
+#[doc = "      \"description\": \"Conflict policy for this mapping (overrides settings.conflict).\","]
 #[doc = "      \"$ref\": \"#/$defs/Conflict\""]
 #[doc = "    },"]
 #[doc = "    \"links\": {"]
@@ -213,15 +230,19 @@ impl ::std::convert::From<bool> for LinkValue {
 #[doc = "      }"]
 #[doc = "    },"]
 #[doc = "    \"live\": {"]
+#[doc = "      \"description\": \"Working location for this mapping (overrides settings.live).\","]
 #[doc = "      \"type\": \"string\""]
 #[doc = "    },"]
 #[doc = "    \"mirror\": {"]
+#[doc = "      \"description\": \"Mirror/prune setting for this mapping (overrides settings.mirror).\","]
 #[doc = "      \"$ref\": \"#/$defs/Mirror\""]
 #[doc = "    },"]
 #[doc = "    \"mode\": {"]
+#[doc = "      \"description\": \"Link mechanism for this mapping (overrides settings.mode).\","]
 #[doc = "      \"$ref\": \"#/$defs/Mode\""]
 #[doc = "    },"]
 #[doc = "    \"store\": {"]
+#[doc = "      \"description\": \"Backing repository for this mapping (overrides settings.store).\","]
 #[doc = "      \"type\": \"string\""]
 #[doc = "    }"]
 #[doc = "  },"]
@@ -232,6 +253,7 @@ impl ::std::convert::From<bool> for LinkValue {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Mapping {
+    #[doc = "Conflict policy for this mapping (overrides settings.conflict)."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub conflict: ::std::option::Option<Conflict>,
     #[doc = "Map of live-relative (or absolute) key -> link value."]
@@ -240,12 +262,16 @@ pub struct Mapping {
         skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
     )]
     pub links: ::std::collections::HashMap<::std::string::String, LinkValue>,
+    #[doc = "Working location for this mapping (overrides settings.live)."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub live: ::std::option::Option<::std::string::String>,
+    #[doc = "Mirror/prune setting for this mapping (overrides settings.mirror)."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub mirror: ::std::option::Option<Mirror>,
+    #[doc = "Link mechanism for this mapping (overrides settings.mode)."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub mode: ::std::option::Option<Mode>,
+    #[doc = "Backing repository for this mapping (overrides settings.store)."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub store: ::std::option::Option<::std::string::String>,
 }
@@ -324,9 +350,15 @@ impl ::std::fmt::Display for Mirror {
 #[doc = "  \"title\": \"Mode\","]
 #[doc = "  \"description\": \"Link mechanism.\","]
 #[doc = "  \"type\": \"string\","]
-#[doc = "  \"enum\": ["]
-#[doc = "    \"symlink\","]
-#[doc = "    \"sync\""]
+#[doc = "  \"oneOf\": ["]
+#[doc = "    {"]
+#[doc = "      \"description\": \"A symbolic link at the live path pointing to the real file in the store.\","]
+#[doc = "      \"const\": \"symlink\""]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"description\": \"An independent content copy, kept up to date incrementally (only changed files are copied).\","]
+#[doc = "      \"const\": \"sync\""]
+#[doc = "    }"]
 #[doc = "  ]"]
 #[doc = "}"]
 #[doc = r" ```"]
@@ -344,8 +376,10 @@ impl ::std::fmt::Display for Mirror {
     PartialOrd,
 )]
 pub enum Mode {
+    #[doc = "A symbolic link at the live path pointing to the real file in the store."]
     #[serde(rename = "symlink")]
     Symlink,
+    #[doc = "An independent content copy, kept up to date incrementally (only changed files are copied)."]
     #[serde(rename = "sync")]
     Sync,
 }
@@ -400,6 +434,7 @@ impl ::std::convert::TryFrom<::std::string::String> for Mode {
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"properties\": {"]
 #[doc = "    \"conflict\": {"]
+#[doc = "      \"description\": \"Default policy when the side being written already exists and differs.\","]
 #[doc = "      \"$ref\": \"#/$defs/Conflict\""]
 #[doc = "    },"]
 #[doc = "    \"live\": {"]
@@ -407,9 +442,11 @@ impl ::std::convert::TryFrom<::std::string::String> for Mode {
 #[doc = "      \"type\": \"string\""]
 #[doc = "    },"]
 #[doc = "    \"mirror\": {"]
+#[doc = "      \"description\": \"Default for whether sync mode prunes destination-only files.\","]
 #[doc = "      \"$ref\": \"#/$defs/Mirror\""]
 #[doc = "    },"]
 #[doc = "    \"mode\": {"]
+#[doc = "      \"description\": \"Default link mechanism for all mappings.\","]
 #[doc = "      \"$ref\": \"#/$defs/Mode\""]
 #[doc = "    },"]
 #[doc = "    \"store\": {"]
@@ -424,13 +461,16 @@ impl ::std::convert::TryFrom<::std::string::String> for Mode {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
+    #[doc = "Default policy when the side being written already exists and differs."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub conflict: ::std::option::Option<Conflict>,
     #[doc = "Working location where links/copies appear (e.g. \"~\")."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub live: ::std::option::Option<::std::string::String>,
+    #[doc = "Default for whether sync mode prunes destination-only files."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub mirror: ::std::option::Option<Mirror>,
+    #[doc = "Default link mechanism for all mappings."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub mode: ::std::option::Option<Mode>,
     #[doc = "Backing repository that holds the real content (e.g. \"~/dotfiles\")."]

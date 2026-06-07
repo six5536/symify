@@ -76,6 +76,12 @@ fn discover_in(base: &Path) -> Result<Vec<PathBuf>> {
 }
 
 /// Parse and merge config files (later files override earlier ones).
+///
+/// ```no_run
+/// use std::path::PathBuf;
+/// let merged = symify_core::config::load(&[PathBuf::from("symify.toml")])?;
+/// # Ok::<(), symify_core::Error>(())
+/// ```
 pub fn load(paths: &[PathBuf]) -> Result<Config> {
     let mut merged = Config::default();
     for path in paths {
@@ -264,6 +270,12 @@ fn merge_mapping(base: Mapping, overlay: Mapping) -> Mapping {
 
 /// Apply `[settings]` defaults to each mapping, expand `~`/env in roots, make
 /// them absolute, and sort for determinism.
+///
+/// ```no_run
+/// use symify_core::config;
+/// let resolved = config::resolve(config::load(&[])?)?;
+/// # Ok::<(), symify_core::Error>(())
+/// ```
 pub fn resolve(config: Config) -> Result<ResolvedConfig> {
     let settings = config.settings.unwrap_or_default();
     let home = home_dir().ok();
