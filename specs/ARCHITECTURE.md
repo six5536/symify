@@ -1,8 +1,9 @@
 # symify — Architecture
 
 symify is a CLI tool that keeps files in a working location in sync with a
-managed backing repository, using symlinks or copies — a dotfiles-style file
-manager.
+managed backing repository, using symlinks or copies. Managing dotfiles is a
+common use, but it applies to any files or folders you want mirrored, backed up,
+or deployed across machines.
 
 The core is written in Rust and shipped two ways:
 
@@ -56,10 +57,10 @@ single value defaulting to the sole mapping on `add`/`remove`).
   collides with the `sync` verb; the two are orthogonal and the collision is
   accepted.
 
-`sync`-mode copies are governed by three per-run flags (and the `mirror` config
-axis): `--checksum` (exact content compare instead of size+mtime), `--delete`
-(prune destination files with no source counterpart — the `mirror` axis), and
-`--modify-window <SECONDS>` (mtime tolerance for coarse filesystems). See
+`sync`-mode copies are governed by three per-run flags (plus the `mirror` config
+setting): `--checksum` (exact content compare instead of size+mtime), `--delete`
+(prune destination files with no source counterpart; equivalent to `mirror = true`),
+and `--modify-window <SECONDS>` (mtime tolerance for coarse filesystems). See
 [sync mode](#sync-mode-incremental-copy).
 
 `--dry-run` is available on `sync` and `deploy`. All verbs support human-readable
@@ -186,7 +187,7 @@ live = "~"            # working location (links/copies appear here)
 store = "~/dotfiles"  # backing repository (real content lives here)
 mode = "symlink"      # symlink | sync
 conflict = "backup"   # skip | replace | backup
-mirror = false        # sync mode: prune destination-only files (the --delete axis)
+mirror = false        # only for mode = "sync": true also prunes files with no counterpart, following the "conflict" policy above
 
 [mappings.dotfiles]
 # optional per-mapping overrides of live / store / mode / conflict / mirror
@@ -246,7 +247,7 @@ the store-side path (real content).
 A key may resolve to a directory. In `symlink` mode it is linked **as a whole
 unit** (one link to the entire directory). In `sync` mode the directory is kept
 in sync by a **per-file diff** (see [sync mode](#sync-mode-incremental-copy)):
-only changed files are copied, and the `mirror` axis governs pruning of
+only changed files are copied, and the `mirror` setting governs pruning of
 destination-only files. Stow-style per-file folding (one link per file) is out of
 scope for v1.
 

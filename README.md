@@ -1,19 +1,22 @@
 # symify
 
-symify keeps your files in sync with a backing repository, as symlinks or
-copies. It's a dotfiles manager: the files you use day to day stay where programs
-expect them, while the real copies live in a repository you can keep under
-version control.
+symify keeps files in sync between a working location and a backing repository.
+Adding a file takes one command:
+`symify ~/.zshrc` moves it into the repository and links it back, so it keeps
+working in place.
+
+It works two ways: **symlinks** (the default) or **file sync**, which keeps
+independent copies up to date on both sides.
+
+Managing dotfiles is a common use,
+but symify works just as well for any files or folders you want to mirror, back
+up, or deploy across machines.
 
 There are two locations:
 
-- **`live`** — where your files are used (usually `~`).
-- **`store`** — the repository that holds the real content (say `~/dotfiles`),
+- **`live`** — where your files are used (e.g. `~`).
+- **`store`** — the repository that holds the real content (e.g. `~/dotfiles`),
   typically tracked in git.
-
-`symify sync` moves your existing live files into the store and leaves links in
-their place. On a new machine, `symify deploy` recreates those links from the
-store. From then on, editing a file edits the real one through its link.
 
 ## Install
 
@@ -24,8 +27,8 @@ cargo install symify             # from source, any platform with a Rust toolcha
 
 ## Quickstart
 
-Just add a file — symify creates the config (`~/.config/symify/symify.toml`,
-defaults `live = ~`, `store = ~/dotfiles`) on first use:
+For the common dotfiles use case, simply add your first file, and symify creates its config file on first use at
+ `~/.config/symify/symify.toml`, with the defaults `live = ~`, `store = ~/dotfiles`:
 
 ```sh
 symify add ~/.zshrc      # move it into ~/dotfiles and replace it with a link
@@ -44,17 +47,22 @@ directly, then `symify sync`:
 ```
 
 ```sh
-symify status            # show what each entry will do
-symify sync --dry-run    # plan without touching anything
-symify sync              # adopt everything listed
+symify status            # report the current state of each entry
+symify sync --dry-run    # preview the changes without touching anything
+symify sync              # apply them
 ```
 
-**On a fresh machine**, clone the store and deploy it:
+**On a fresh machine**, you may clone the store and deploy it:
 
 ```sh
 git clone <your-dotfiles-repo> ~/dotfiles
 symify deploy            # create links in ~ pointing at the store
 ```
+
+If the machine already has a file where the store would deploy (e.g. a stock
+`~/.bashrc`), the default `conflict = "backup"` policy moves the existing file
+aside to `<name>.<timestamp>.bak` before linking, so nothing is lost. Run
+`symify deploy --dry-run` first to see exactly what will change.
 
 ## Configuration
 
@@ -67,7 +75,7 @@ live = "~"            # where links/copies appear
 store = "~/dotfiles"  # where the real content lives
 mode = "symlink"      # symlink | sync (sync = independent copy)
 conflict = "backup"   # skip | replace (overwrite, no backup) | backup (.<timestamp>.bak)
-mirror = false        # sync mode: prune store files with no live counterpart (the --delete axis)
+mirror = false        # only for mode = "sync": true also prunes files with no counterpart, following the "conflict" policy above
 
 [mappings.dotfiles.links]
 ".config/fish/config.fish" = ""              # "" or true: mirror the key under store
@@ -79,32 +87,29 @@ mirror = false        # sync mode: prune store files with no live counterpart (t
 symify reads `~/.config/symify/symify.toml` and any `~/.config/symify/conf.d/*.toml`
 files, with later files winning key by key. The JSON Schema at
 [`schema/symify.schema.json`](schema/symify.schema.json) gives editors TOML
-autocomplete and validation.
-
-For path resolution rules, the per-entry state machine, and the full design, see
-[specs/ARCHITECTURE.md](specs/ARCHITECTURE.md).
+autocomplete and validation, and documents every field.
 
 ## Commands
 
 | Command          | Direction        | What it does                                       |
 | ---------------- | ---------------- | -------------------------------------------------- |
-| `add <path>`     | `live` → `store` | Track an existing file and adopt it.               |
+| `add <path>`     | `live` → `store` | Track a file: move it into the store and link it.  |
 | `remove <path>`  | —                | Stop tracking a file; restore a standalone copy.   |
 | `list` (`ls`)    | read-only        | List mappings and where they point.                |
 | `sync`           | `live` → `store` | Bring your live files into the store.              |
 | `deploy`         | `store` → `live` | Set a machine up from the store.                   |
 | `status`         | read-only        | Report the state of each entry.                    |
 
-- `symify <path>` is shorthand for `symify add <path>` — adding is the common
-  case. (A path named like a verb, e.g. `status`, is read as that verb; use
-  `symify add status` to disambiguate.)
+- `symify <path>` is shorthand for `symify add <path>`, since adding is the
+  common case. (A path named like a verb, e.g. `status`, is read as that verb;
+  use `symify add status` to disambiguate.)
 - `add`/`remove` take `-m <mapping>` (defaults to your sole mapping) and edit the
   config in place, preserving comments. `remove --no-restore` leaves the link.
 - `sync`/`deploy`/`status`/`list` take `-m <mapping>` (repeatable) to act on
   specific mappings; omit it for all.
 - `sync`/`deploy`/`add`/`remove` take `--dry-run`; every command takes `--json`
   and `-c <file>` (repeatable; replaces the usual config locations). There's no
-  separate `init` — any command creates a default config if none exists.
+  separate `init`; any command creates a default config if none exists.
 - In `sync` mode, `sync`/`deploy` copy only changed files (a size+mtime
   quick-check, with mtime preserved on copy). Extra flags:
   - `--delete` — prune destination files with no source counterpart (forces
@@ -122,7 +127,7 @@ Run `symify <command> --help` for the full reference and exit codes, or
 
 symify can move and delete files, so it holds itself to a few rules:
 
-- It only ever touches the exact paths in your config — it never scans a
+- It only ever touches the exact paths in your config; it never scans a
   directory or tracks files you didn't list.
 - It refuses to act on a protected root (`/`, your home directory, or a
   mapping's own `live`/`store` root), and anything outside your `live` root must
@@ -136,16 +141,17 @@ symify can move and delete files, so it holds itself to a few rules:
 
 To report a security issue, see [SECURITY.md](SECURITY.md).
 
-## Backups & history
+## Backups & History
 
-symify deliberately isn't a backup tool. Its only safety net is the
+Your store is just a directory, so history comes for free: keep it under **git**
+and commit after each `sync`, and `git log` gives you full, deduplicated,
+pushable history. If your store isn't a git repository, point a backup tool such
+as [restic](https://restic.net/) or [borg](https://www.borgbackup.org/) at it.
+
+symify focuses on keeping your two locations in sync and leaves long-term
+archiving to those purpose-built tools. Its own safety net is the
 `<name>.<timestamp>.bak` it writes before overwriting a file under
-`conflict = "backup"` — not snapshot rotation or point-in-time recovery.
-
-For real history, lean on the store: keep `~/dotfiles` under **git** and commit
-after a `sync` — `git log` gives you full, dedup'd, pushable history for free.
-If your store isn't a git repo, point a dedicated backup tool
-([restic](https://restic.net/), [borg](https://www.borgbackup.org/)) at it.
+`conflict = "backup"`.
 
 ## Development
 

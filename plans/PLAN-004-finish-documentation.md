@@ -241,9 +241,25 @@ Grouped; exact set depends on the grilled answers above.
 
 ## Findings (surfaced while documenting)
 
-No code **behavior** bugs were found, so there are no deferred Findings. What the
-audit surfaced was the reverse — docs lagging the code (decision 10: code is
-canonical), all corrected in-place:
+One **behavior** finding (deferred — needs a code fix, not a docs change) and
+several docs-lagging-code fixes corrected in-place.
+
+**Deferred (safety):** `mirror = true` does not protect `.git` or other
+repository metadata when pruning. In a `sync`-mode directory entry, any path on
+the destination side with no source counterpart is pruned via `prune()`, and
+`fs::dir_entries` filters only symify's own artifacts (`*.bak`,
+`*.symify-tmp.*`) — `.git`, `.gitignore`, etc. are not excluded. Effect depends
+on `conflict`: `backup` (default) renames `.git` to `.git.<timestamp>.bak`
+(recoverable, no prompt); `replace` deletes it (a non-empty dir hits the
+recursive-delete confirmation); `skip` leaves it as drift. The common dotfiles
+layout (git repo at the store root, entries below it) is unaffected; the risk is
+mirroring a directory over a git working copy (e.g. `deploy --delete` into a live
+checkout the store doesn't contain). Recommended follow-up: treat `.git` (and
+likely other VCS metadata) as never-pruned — like an artifact — and/or add a
+user-facing exclude mechanism. Surfaced via the README `mirror` comment review.
+
+The remaining items were docs lagging the code (decision 10: code is canonical),
+all corrected in-place:
 
 1. **Undocumented bare-path shortcut.** `symify <path>` is rewritten to
    `symify add <path>` (`cli::normalize_args`), absent from README and

@@ -55,7 +55,7 @@
     },
     "Mirror": {
       "title": "Mirror",
-      "description": "When true, sync mode prunes files on the destination side that no longer exist in the source (the `--delete` axis). Default false (additive: only add/update, never prune).",
+      "description": "When true, sync mode prunes files on the destination side that no longer exist in the source (the same as passing `--delete`). Default false: only add or update files, never prune.",
       "type": "boolean"
     },
     "LinkValue": {

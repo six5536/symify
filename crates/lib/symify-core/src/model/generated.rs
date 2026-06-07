@@ -287,14 +287,14 @@ impl ::std::default::Default for Mapping {
         }
     }
 }
-#[doc = "When true, sync mode prunes files on the destination side that no longer exist in the source (the `--delete` axis). Default false (additive: only add/update, never prune)."]
+#[doc = "When true, sync mode prunes files on the destination side that no longer exist in the source (the same as passing `--delete`). Default false: only add or update files, never prune."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
 #[doc = r" ```json"]
 #[doc = "{"]
 #[doc = "  \"title\": \"Mirror\","]
-#[doc = "  \"description\": \"When true, sync mode prunes files on the destination side that no longer exist in the source (the `--delete` axis). Default false (additive: only add/update, never prune).\","]
+#[doc = "  \"description\": \"When true, sync mode prunes files on the destination side that no longer exist in the source (the same as passing `--delete`). Default false: only add or update files, never prune.\","]
 #[doc = "  \"type\": \"boolean\""]
 #[doc = "}"]
 #[doc = r" ```"]

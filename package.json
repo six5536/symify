@@ -1,7 +1,7 @@
 {
     "name": "@six5536/symify-workspace",
     "private": true,
-    "description": "Symlink or sync files and folders from a live location to a backup with ease (dotfiles and more)",
+    "description": "Keep files in sync between a working location and a backing repository, via symlinks or copies.",
     "workspaces": [
         "packages/*"
     ],

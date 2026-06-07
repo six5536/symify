@@ -1,8 +1,8 @@
 # symify-core
 
-Core library for [**symify**](https://crates.io/crates/symify) — a dotfiles-style
-file manager that keeps a working location in sync with a backing repository, as
-symlinks or copies.
+Core library for [**symify**](https://crates.io/crates/symify) — a command-line
+tool that keeps files in sync between a working location and a backing
+repository, as symlinks or copies (managing dotfiles is one common use).
 
 > This crate is the internal engine behind the `symify` CLI. Most users want the
 > command-line tool — install [`symify`](https://crates.io/crates/symify), not
@@ -23,9 +23,7 @@ mutates:
 - **`status`** — derive per-entry status labels from the plan.
 - **`model`** — config types generated from `schema/symify.schema.json`.
 
-See the [API docs on docs.rs](https://docs.rs/symify-core) and the
-[architecture overview](https://github.com/six5536/symify/blob/main/specs/ARCHITECTURE.md)
-for the full design.
+See the [API docs on docs.rs](https://docs.rs/symify-core) for the full reference.
 
 ## License
 

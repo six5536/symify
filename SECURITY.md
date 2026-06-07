@@ -22,6 +22,5 @@ report, investigate, and coordinate a fix and disclosure with you.
 symify moves, links, and (under `conflict = "replace"`) deletes files, so its
 safety model is part of its security posture: it never discovers files, refuses
 protected roots, refuses to run as root without `--allow-root`, and confirms
-unrecoverable deletes. That model is documented in the README "Safety" section
-and in [specs/ARCHITECTURE.md](specs/ARCHITECTURE.md#safety). Reports that
-demonstrate a way around those guarantees are in scope.
+unrecoverable deletes. That model is documented in the README "Safety" section.
+Reports that demonstrate a way around those guarantees are in scope.

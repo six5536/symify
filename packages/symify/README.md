@@ -1,9 +1,10 @@
 # symify
 
-Keep your files in sync with a backing repository — as symlinks or copies. A
-dotfiles-style file manager: the files you use day to day stay where programs
-expect them, while the real copies live in a repository you can keep under
-version control (e.g. git).
+Keep files in sync between a working location and a backing repository, as
+symlinks or copies. The files you work with stay in place, while the real copies
+live in a repository you can track with git. Dotfiles are a common use, but
+symify works just as well for any files or folders you want to mirror, back up,
+or deploy across machines.
 
 ## Install
 
@@ -35,11 +36,8 @@ symify deploy            # on a new machine, recreate links from the store
 
 ## Documentation
 
-Full documentation — configuration, path resolution, the per-entry state
-machine, the safety model, and every command — lives in the GitHub repository:
-
-- Readme & usage: <https://github.com/six5536/symify#readme>
-- Architecture & design: <https://github.com/six5536/symify/blob/main/specs/ARCHITECTURE.md>
+Full usage, configuration, and the safety model are documented in the GitHub
+repository: <https://github.com/six5536/symify#readme>.
 
 ## License
 
