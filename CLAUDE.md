@@ -7,6 +7,19 @@
 
 - See /specs/ARCHITECTURE.md
 
+# Contributing
+
+- See /CONTRIBUTING.md for setup, the test layers, and how a release is cut.
+
+# Releasing
+
+- Add a `## [X.Y.Z]` section to /CHANGELOG.md **before** cutting a release.
+  `npm run release` and the release workflow both refuse a version with no
+  section, and that section becomes the GitHub release notes.
+- Then `npm run release <version>` (bumps, verifies, commits, tags — never
+  pushes) and review before `git push --follow-tags`. Pushing the tag publishes
+  irreversibly.
+
 # Dependency Rules
 
 - Always ask before adding dependencies
