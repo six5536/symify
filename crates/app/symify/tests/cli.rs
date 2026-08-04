@@ -438,6 +438,48 @@ fn man_is_hidden_from_help_but_completions_is_not() {
     );
 }
 
+/// A reader that stops early (`symify … | head`) must not turn into a crash or a
+/// spurious error. `clap_complete` `expect()`s its writes, so before this was
+/// fixed `completions fish` hit the closed pipe and died with SIGABRT under
+/// `panic = "abort"`; the config-reading verbs printed
+/// `error: I/O error at <stdout>: Broken pipe` and exited 2.
+#[test]
+fn closed_stdout_exits_cleanly_and_quietly() {
+    let fx = Fx::new("backup", &[r#""a" = true"#, r#""b" = true"#]);
+    let bin = assert_cmd::cargo::cargo_bin("symify");
+    let cfg = fx.config.to_string_lossy().into_owned();
+
+    for args in [
+        vec!["completions", "fish"],
+        vec!["completions", "bash"],
+        vec!["man"],
+        vec!["status", "-c", &cfg],
+        vec!["list", "--entries", "-c", &cfg],
+    ] {
+        let mut child = std::process::Command::new(&bin)
+            .args(&args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        // Close the read end before the child gets going, so its writes see EPIPE.
+        drop(child.stdout.take());
+        let out = child.wait_with_output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{args:?} on a closed pipe: expected exit 0, got {:?} (stderr: {stderr})",
+            out.status
+        );
+        assert!(
+            stderr.is_empty(),
+            "{args:?} on a closed pipe should print nothing, got: {stderr}"
+        );
+    }
+}
+
 // ----- safety guards ----------------------------------------------------
 
 #[test]

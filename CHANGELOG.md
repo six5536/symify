@@ -11,6 +11,16 @@ publish a version it cannot find a heading for.
 
 ## [Unreleased]
 
+### Fixed
+
+- Piping output into a reader that stops early no longer crashes or invents an
+  error. `symify completions fish | head` aborted outright (`clap_complete`
+  panics on a failed write, and the release profile turns that into SIGABRT);
+  `status`, `list` and `man` printed `error: I/O error at <stdout>: Broken pipe`
+  and exited 2 once their output outgrew the buffer. A closed pipe is now a
+  silent exit 0. One consequence worth knowing: `symify status | head` reports 0
+  even when there is drift, because the run never finished.
+
 ## [0.1.0] - 2026-08-04
 
 First release.

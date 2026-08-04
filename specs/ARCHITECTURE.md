@@ -387,6 +387,15 @@ the entry's resolved action.
 sync; for `sync`/`deploy`: an unresolved `skip` conflict); `2` error (one or more
 entries failed, or config/IO error).
 
+A closed stdout pipe is the one I/O failure that is *not* an error: when a
+downstream reader stops early (`| head`, a pager quit), symify exits `0` and
+prints nothing, as ripgrep and friends do. Rust sets `SIGPIPE` to `SIG_IGN`, so
+this arrives as an `EPIPE` write error and is classified in `main`. It does mean
+a truncated `status` reports `0` rather than the drift it never got to finish
+counting. `completions`/`man` render into a buffer before writing for the same
+reason: `clap_complete` `expect()`s its writes, so writing straight to a closed
+stdout aborts the process under `panic = "abort"`.
+
 ### `status` reporting
 
 Read-only, direction-neutral. Per entry it reports one `StatusLabel`, never

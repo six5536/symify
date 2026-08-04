@@ -28,11 +28,21 @@ use crate::cli::{
 fn main() -> ExitCode {
     match run() {
         Ok(code) => ExitCode::from(code),
+        // A downstream reader went away (`| head`, a pager quit early). That is
+        // not our failure, so say nothing and exit clean, the same as ripgrep and
+        // friends. Rust sets SIGPIPE to SIG_IGN, so this reaches us as an EPIPE
+        // write error instead of killing the process.
+        Err(e) if is_broken_pipe(&e) => ExitCode::from(output::EXIT_OK),
         Err(e) => {
             eprintln!("error: {e}");
             ExitCode::from(output::EXIT_FAILURE)
         }
     }
+}
+
+/// Whether an error is just a closed downstream pipe rather than a real fault.
+fn is_broken_pipe(e: &Error) -> bool {
+    matches!(e, Error::Io { source, .. } if source.kind() == io::ErrorKind::BrokenPipe)
 }
 
 fn run() -> symify_core::Result<u8> {
@@ -68,16 +78,34 @@ fn run() -> symify_core::Result<u8> {
 fn run_completions(args: CompletionsArgs) -> symify_core::Result<u8> {
     let mut cmd = Cli::command();
     let name = cmd.get_name().to_string();
-    clap_complete::generate(args.shell, &mut cmd, name, &mut io::stdout());
+    // Rendered into a buffer rather than straight to stdout: `generate` returns
+    // `()` and `expect()`s its writes internally, so handing it a closed pipe
+    // aborts the process (`panic = "abort"`) instead of surfacing an error we
+    // can classify. Writing the finished buffer ourselves keeps that in our hands.
+    let mut buf = Vec::new();
+    clap_complete::generate(args.shell, &mut cmd, name, &mut buf);
+    write_stdout(&buf)?;
     Ok(output::EXIT_OK)
 }
 
 /// Write a roff man page to stdout, for packaging into release archives.
 fn run_man() -> symify_core::Result<u8> {
+    let mut buf = Vec::new();
     clap_mangen::Man::new(Cli::command())
-        .render(&mut io::stdout())
+        .render(&mut buf)
         .map_err(stdout_err)?;
+    write_stdout(&buf)?;
     Ok(output::EXIT_OK)
+}
+
+/// Write a fully-rendered buffer to stdout and flush it. The explicit flush
+/// matters: the runtime's flush at exit discards its error, which made a broken
+/// pipe surface only when the buffer happened to fill mid-render.
+fn write_stdout(bytes: &[u8]) -> symify_core::Result<()> {
+    use io::Write as _;
+    let mut out = io::stdout().lock();
+    out.write_all(bytes).map_err(stdout_err)?;
+    out.flush().map_err(stdout_err)
 }
 
 /// Whether a command mutates the filesystem or config (so it should be refused
@@ -410,6 +438,35 @@ mod tests {
 
     fn cmd(args: &[&str]) -> Command {
         Cli::try_parse_from(args).unwrap().command.unwrap()
+    }
+
+    #[test]
+    fn broken_pipe_is_the_only_error_treated_as_clean() {
+        let epipe = Error::io(
+            Path::new("<stdout>"),
+            io::Error::new(io::ErrorKind::BrokenPipe, "Broken pipe"),
+        );
+        assert!(is_broken_pipe(&epipe));
+
+        // Any other I/O failure is a real one, however similar it looks.
+        for kind in [
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::NotFound,
+            io::ErrorKind::WriteZero,
+        ] {
+            let e = Error::io(Path::new("<stdout>"), io::Error::new(kind, "nope"));
+            assert!(!is_broken_pipe(&e), "{kind:?} must not be swallowed");
+        }
+        // Nor is a non-I/O error, which has no `kind` to inspect at all.
+        assert!(!is_broken_pipe(&Error::config("bad mapping")));
+    }
+
+    #[test]
+    fn write_stdout_round_trips_bytes() {
+        // Captured by the test harness; the point is that it reports success
+        // rather than panicking, and handles an empty buffer.
+        assert!(write_stdout(b"symify\n").is_ok());
+        assert!(write_stdout(b"").is_ok());
     }
 
     #[test]
