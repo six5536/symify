@@ -101,9 +101,29 @@ jobs:
         with:
           tool: cargo-zigbuild
 
+      # Version read from .mise.toml so CI and local dev cross-compile with the
+      # same zig, rather than the action defaulting to "latest".
+      - name: Read the pinned zig version
+        if: matrix.builder == 'zigbuild'
+        id: zig
+        run: |
+          version="$(grep -oE '^zig = "[^"]+"' .mise.toml | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+          if [ -z "$version" ]; then
+            echo "::error::could not read the zig version from .mise.toml"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "zig $version"
+
+      # v2 or newer is required: Zig changed its tarball naming in 0.15 from
+      # zig-<os>-<arch>-<ver> to zig-<arch>-<os>-<ver>, and v1 still builds the
+      # old URL, so every mirror 404s.
       - name: Install zig
         if: matrix.builder == 'zigbuild'
-        uses: mlugg/setup-zig@v1
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ steps.zig.outputs.version }}
+          cache-key: ${{ matrix.target }}
 
       - name: Build (zigbuild)
         if: matrix.builder == 'zigbuild'
