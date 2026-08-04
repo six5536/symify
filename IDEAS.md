@@ -1,4 +1,5 @@
 # Backup
+
 - Grandfather, father, son - auto backup
 - Decided against (2026-06): out of scope. symify is a dotfiles manager whose
   store is meant to be a git repo — git already provides full history, and
@@ -15,10 +16,3 @@
   `symify completions <shell>` verb — the only form that reaches npm and
   `cargo install` users, since release archives reach neither — plus a hidden
   `symify man` used to generate the man page into the release archives.
-
-# Brand
-
-- symc
-- symk
-- symsync
-- slynk
