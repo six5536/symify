@@ -11,10 +11,9 @@ publish a version it cannot find a heading for.
 
 ## [Unreleased]
 
-## [0.1.0-rc.1] - 2026-08-04
+## [0.1.0] - 2026-08-04
 
-First public prerelease. Published to validate the release pipeline end to end;
-the feature set is the same one intended for `0.1.0`.
+First release.
 
 ### Added
 
@@ -57,6 +56,15 @@ the feature set is the same one intended for `0.1.0`.
   added and then removed before any public release, such as the `mirror` /
   `--delete` prune behavior — is recorded in [`plans/`](plans/) rather than here,
   since none of it ever shipped to users.
+- The `0.0.0` versions on npm are empty placeholders, published only to reserve
+  the package names so trusted publishing could be configured. They contain no
+  software and can be ignored.
 
-[Unreleased]: https://github.com/six5536/symify/compare/v0.1.0-rc.1...HEAD
+## [0.1.0-rc.1] - 2026-08-04
+
+Prerelease of `0.1.0`, published to validate the release pipeline end to end.
+Functionally identical to `0.1.0`.
+
+[Unreleased]: https://github.com/six5536/symify/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/six5536/symify/releases/tag/v0.1.0
 [0.1.0-rc.1]: https://github.com/six5536/symify/releases/tag/v0.1.0-rc.1
