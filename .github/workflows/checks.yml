@@ -26,21 +26,21 @@ jobs:
         os: [macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.96.0
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.85.6
         with:
           tool: cargo-nextest
 
@@ -76,7 +76,7 @@ jobs:
     env:
       CARGO_BUILD_RUSTC_WRAPPER: ""
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@nightly
@@ -85,12 +85,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
 
       - name: Install cargo-llvm-cov and cargo-nextest
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.85.6
         with:
           tool: cargo-llvm-cov,cargo-nextest
 
@@ -103,13 +103,13 @@ jobs:
     env:
       CARGO_BUILD_RUSTC_WRAPPER: ""
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
       - uses: Swatinem/rust-cache@v2
       # Prebuilt where available, rather than `cargo install` building it from
       # source on every run. The version matches the pin in .mise.toml.
       - name: Install cargo-typify
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.85.6
         with:
           tool: cargo-typify@0.6.2
       - name: Regenerate model and check for drift
@@ -122,7 +122,7 @@ jobs:
     name: cargo-deny (licenses, bans, sources)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check licenses bans sources
