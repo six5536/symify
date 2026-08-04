@@ -343,7 +343,8 @@ Bare `symify` (no command) prints help and exits 0.
   a roff man page and is hidden: it exists for packaging, not daily use.
   Both names are in the `SUBCOMMANDS` shadow list, without which the bare-path
   shortcut would rewrite `symify completions bash` to `symify add completions
-  bash`.
+  bash`. Both also render into a buffer before writing it out, because
+  `clap_complete` panics rather than returning an error when a write fails.
 - `-m, --mapping` — repeatable filter on the run/query verbs (omit = all);
   a single value on `add`/`remove` defaulting to the sole mapping. Unknown name:
   `add` creates the mapping, every other verb errors.
@@ -385,16 +386,10 @@ the entry's resolved action.
 
 **Exit codes:** `0` success / clean; `1` drift (for `status`: any entry out of
 sync; for `sync`/`deploy`: an unresolved `skip` conflict); `2` error (one or more
-entries failed, or config/IO error).
-
-A closed stdout pipe is the one I/O failure that is *not* an error: when a
-downstream reader stops early (`| head`, a pager quit), symify exits `0` and
-prints nothing, as ripgrep and friends do. Rust sets `SIGPIPE` to `SIG_IGN`, so
-this arrives as an `EPIPE` write error and is classified in `main`. It does mean
-a truncated `status` reports `0` rather than the drift it never got to finish
-counting. `completions`/`man` render into a buffer before writing for the same
-reason: `clap_complete` `expect()`s its writes, so writing straight to a closed
-stdout aborts the process under `panic = "abort"`.
+entries failed, or config/IO error). A closed stdout pipe is the one I/O failure
+that is not an error: a reader that stops early (`| head`, a pager quit) ends the
+run at `0`, silently. That does mean a truncated `status` reports `0` rather than
+the drift it never finished counting.
 
 ### `status` reporting
 
