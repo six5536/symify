@@ -178,6 +178,22 @@ Pushing the tag is what triggers the publish, and publishes cannot be undone
 A prerelease tag (`vX.Y.Z-rc.1`) publishes to npm under the `next` dist-tag and
 is marked as a prerelease on GitHub, so it never becomes `latest`.
 
+### Publishing credentials
+
+npm uses **trusted publishing (OIDC)** — there is no npm token. The workflow's
+`id-token: write` permission is the credential, and each package has a trusted
+publisher configured on npmjs.com pointing at this repository and
+`release.yml`. Provenance is generated automatically as a result.
+
+This is also why the packages carry a `0.0.0` placeholder version: a trusted
+publisher can only be attached to a package that already exists, so the names
+were reserved with an empty publish before the first real release. Don't
+unpublish those — removing a package's only version can delete the package and
+its trusted-publisher configuration with it.
+
+crates.io still uses a token (`CARGO_REGISTRY_TOKEN`); it does not require a
+one-time password, so it works unattended.
+
 ### Version consistency
 
 `npm run verify-version [version]` checks that the Cargo workspace, the

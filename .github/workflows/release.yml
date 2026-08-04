@@ -164,7 +164,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # npm provenance
+      id-token: write # npm trusted publishing (OIDC) + automatic provenance
     env:
       VERSION: ${{ needs.meta.outputs.version }}
       NPM_TAG: ${{ needs.meta.outputs.npm_tag }}
@@ -178,6 +178,11 @@ jobs:
 
       - name: Install the pinned toolchain
         run: rustup toolchain install --profile minimal
+
+      # Trusted publishing needs npm >= 11.5.1. Printed so a runner image with an
+      # older npm is obvious in the log rather than silently falling back.
+      - name: Show npm version
+        run: npm --version
 
       - name: Download platform binaries
         uses: actions/download-artifact@v4
@@ -201,8 +206,6 @@ jobs:
           echo "$actual"
 
       - name: Dry-run every publish before doing any of them
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           cargo publish --workspace --locked --dry-run
           for pkg in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
@@ -210,21 +213,21 @@ jobs:
           done
           npm publish ./packages/symify --dry-run --tag "$NPM_TAG"
 
+      # Authentication is npm trusted publishing (OIDC) via `id-token: write`;
+      # there is no NPM_TOKEN. Provenance is generated automatically under OIDC,
+      # so no --provenance flag is needed.
+      #
       # Platform packages first: the launcher declares them as
       # optionalDependencies, so publishing it first would briefly point users at
       # versions that do not exist yet.
       - name: Publish platform packages to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           for pkg in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
-            npm publish "./packages/symify-$pkg" --provenance --tag "$NPM_TAG"
+            npm publish "./packages/symify-$pkg" --tag "$NPM_TAG"
           done
 
       - name: Publish launcher to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish ./packages/symify --provenance --tag "$NPM_TAG"
+        run: npm publish ./packages/symify --tag "$NPM_TAG"
 
       # `--workspace` resolves the symify-core -> symify ordering itself, so no
       # sleep-and-hope between the two publishes.
