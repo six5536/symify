@@ -41,7 +41,7 @@ the feature set is the same one intended for `0.1.0`.
   `0` clean / `1` drift / `2` error. `--dry-run` on the mutating verbs.
 - **Shell completions and man page.** `symify completions <shell>` supports bash,
   zsh, fish, PowerShell and elvish. A man page ships in the release archives.
-- **Distribution.** Prebuilt binaries via npm (`@six5536/symify`) for Linux and
+- **Distribution.** Prebuilt binaries via npm (`symify`) for Linux and
   macOS on x64 and arm64, and from source via `cargo install symify`. Linux
   binaries are statically linked against musl, so they carry no glibc
   requirement and run on Alpine.

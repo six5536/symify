@@ -9,7 +9,7 @@ or deploy across machines.
 ## Install
 
 ```sh
-npm install -g @six5536/symify
+npm install -g symify
 ```
 
 This package is a thin launcher. It declares a prebuilt binary for each

@@ -1,5 +1,5 @@
 {
-  "name": "@six5536/symify",
+  "name": "symify",
   "version": "0.1.0",
   "description": "Keep a working location in sync with a managed backing repository via symlinks or copies.",
   "homepage": "https://github.com/six5536/symify#readme",

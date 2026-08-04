@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/six5536/symify/actions/workflows/ci.yml/badge.svg)](https://github.com/six5536/symify/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/symify.svg)](https://crates.io/crates/symify)
-[![npm](https://img.shields.io/npm/v/@six5536/symify.svg)](https://www.npmjs.com/package/@six5536/symify)
+[![npm](https://img.shields.io/npm/v/symify.svg)](https://www.npmjs.com/package/symify)
 [![docs.rs](https://img.shields.io/docsrs/symify-core)](https://docs.rs/symify-core)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -27,8 +27,8 @@ There are two locations:
 ## Install
 
 ```sh
-npm install -g @six5536/symify   # prebuilt binary, Linux/macOS
-cargo install symify             # from source, needs a Rust toolchain
+npm install -g symify   # prebuilt binary, Linux/macOS
+cargo install symify    # from source, needs a Rust toolchain
 ```
 
 Prebuilt binaries cover Linux and macOS on `x64` and `arm64`. The Linux builds

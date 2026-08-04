@@ -8,7 +8,7 @@ or deployed across machines.
 The core is written in Rust and shipped two ways:
 
 - **cargo** — the `symify-core` library and `symify` binary.
-- **npm** — the `@six5536/symify` package: prebuilt per-platform binaries with a
+- **npm** — the `symify` package: prebuilt per-platform binaries with a
   thin JS launcher.
 
 > Status: not released. Breaking changes are allowed.
@@ -481,14 +481,14 @@ Publish `symify-core` and `symify` to crates.io.
 
 ```
 packages/
-  symify/              # published as @six5536/symify — launcher (bin: symify)
+  symify/              # published as symify — launcher (bin: symify)
   symify-linux-x64/    # published as @six5536/symify-linux-x64 — prebuilt binary, declares os/cpu
   symify-linux-arm64/
   symify-darwin-x64/
   symify-darwin-arm64/
 ```
 
-- The launcher (`@six5536/symify`) declares each platform package in
+- The launcher (`symify`) declares each platform package in
   `optionalDependencies` pinned to an **exact** version; npm installs only the
   host's match.
 - A small JS shim `require.resolve`s the installed platform package's binary and
