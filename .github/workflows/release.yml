@@ -206,9 +206,9 @@ jobs:
         run: |
           cargo publish --workspace --locked --dry-run
           for pkg in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
-            npm publish "packages/symify-$pkg" --dry-run --tag "$NPM_TAG"
+            npm publish "./packages/symify-$pkg" --dry-run --tag "$NPM_TAG"
           done
-          npm publish packages/symify --dry-run --tag "$NPM_TAG"
+          npm publish ./packages/symify --dry-run --tag "$NPM_TAG"
 
       # Platform packages first: the launcher declares them as
       # optionalDependencies, so publishing it first would briefly point users at
@@ -218,13 +218,13 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           for pkg in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
-            npm publish "packages/symify-$pkg" --provenance --tag "$NPM_TAG"
+            npm publish "./packages/symify-$pkg" --provenance --tag "$NPM_TAG"
           done
 
       - name: Publish launcher to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish packages/symify --provenance --tag "$NPM_TAG"
+        run: npm publish ./packages/symify --provenance --tag "$NPM_TAG"
 
       # `--workspace` resolves the symify-core -> symify ordering itself, so no
       # sleep-and-hope between the two publishes.
