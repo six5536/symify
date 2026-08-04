@@ -6,7 +6,9 @@ use clap::{Args, Parser, Subcommand};
 
 /// Keep your files in sync with a backing repository — as symlinks or copies.
 #[derive(Debug, Parser)]
-#[command(name = "symify", about, long_about = None, disable_version_flag = true)]
+// `version` feeds the man page header and `--help`; the built-in `-V` flag stays
+// disabled because we render the version ourselves (see `main::run`).
+#[command(name = "symify", about, long_about = None, version, disable_version_flag = true)]
 pub struct Cli {
     /// The command to run.
     #[command(subcommand)]
@@ -16,7 +18,7 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub allow_root: bool,
 
-    /// Print the version (just the number, for scripts) and exit.
+    /// Print the version and exit.
     #[arg(short = 'V', long = "version", global = true)]
     pub version: bool,
 }
@@ -38,6 +40,20 @@ pub enum Command {
     /// List the mappings and where they point.
     #[command(visible_alias = "ls")]
     List(ListArgs),
+    /// Print a shell completion script to stdout.
+    Completions(CompletionsArgs),
+    /// Print a roff man page to stdout. Hidden: it exists for packaging, not
+    /// day-to-day use, and is generated into the release archives.
+    #[command(hide = true)]
+    Man,
+}
+
+/// Arguments for `completions`.
+#[derive(Debug, Args)]
+pub struct CompletionsArgs {
+    /// Shell to generate a completion script for.
+    #[arg(value_enum)]
+    pub shell: clap_complete::Shell,
 }
 
 /// Shared arguments for the mutating run verbs (`sync`/`deploy`).
@@ -156,7 +172,17 @@ pub struct AddArgs {
 
 /// Subcommand names and aliases that the bare-path shortcut must not shadow.
 const SUBCOMMANDS: &[&str] = &[
-    "sync", "deploy", "status", "add", "remove", "rm", "list", "ls", "help",
+    "sync",
+    "deploy",
+    "status",
+    "add",
+    "remove",
+    "rm",
+    "list",
+    "ls",
+    "help",
+    "completions",
+    "man",
 ];
 
 /// Make `symify <PATH> …` an alias for `symify add <PATH> …`, since adding is the
@@ -254,10 +280,29 @@ mod tests {
     #[test]
     fn known_subcommands_and_aliases_untouched() {
         for cmd in [
-            "sync", "deploy", "status", "add", "remove", "rm", "list", "ls",
+            "sync",
+            "deploy",
+            "status",
+            "add",
+            "remove",
+            "rm",
+            "list",
+            "ls",
+            // Without these in SUBCOMMANDS the bare-path shortcut would rewrite
+            // `symify completions bash` into `symify add completions bash`.
+            "completions",
+            "man",
         ] {
             assert_eq!(norm(&[cmd]), ["symify", cmd]);
         }
+    }
+
+    #[test]
+    fn completions_shell_argument_is_not_shadowed() {
+        assert_eq!(
+            norm(&["completions", "bash"]),
+            ["symify", "completions", "bash"]
+        );
     }
 
     #[test]

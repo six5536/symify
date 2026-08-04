@@ -304,7 +304,8 @@ fn bare_invocation_prints_help() {
 // ----- version ----------------------------------------------------------
 
 #[test]
-fn version_flag_prints_bare_number() {
+fn version_flag_prints_name_and_number() {
+    let expected = format!("symify {}", env!("CARGO_PKG_VERSION"));
     for flag in ["-V", "--version"] {
         let out = Command::cargo_bin("symify")
             .unwrap()
@@ -312,9 +313,84 @@ fn version_flag_prints_bare_number() {
             .assert()
             .success();
         let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
-        // Just the number, no "symify " prefix — friendlier for scripts.
-        assert_eq!(stdout.trim(), env!("CARGO_PKG_VERSION"), "flag {flag}");
+        assert_eq!(stdout.trim(), expected, "flag {flag}");
     }
+}
+
+#[test]
+fn version_flag_is_global() {
+    // `-V` is declared global, so it works after a subcommand too.
+    let out = Command::cargo_bin("symify")
+        .unwrap()
+        .args(["sync", "-V"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert_eq!(
+        stdout.trim(),
+        format!("symify {}", env!("CARGO_PKG_VERSION"))
+    );
+}
+
+// ----- completions / man ------------------------------------------------
+
+#[test]
+fn completions_generates_for_every_supported_shell() {
+    for (shell, needle) in [
+        ("bash", "_symify()"),
+        ("zsh", "#compdef symify"),
+        ("fish", "complete -c symify"),
+        ("powershell", "Register-ArgumentCompleter"),
+        ("elvish", "set edit:completion:arg-completer[symify]"),
+    ] {
+        let out = Command::cargo_bin("symify")
+            .unwrap()
+            .args(["completions", shell])
+            .assert()
+            .success();
+        let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+        assert!(stdout.contains(needle), "shell {shell} got: {stdout}");
+    }
+}
+
+#[test]
+fn completions_rejects_unknown_shell() {
+    Command::cargo_bin("symify")
+        .unwrap()
+        .args(["completions", "nonsuch"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn man_renders_roff_with_version() {
+    let out = Command::cargo_bin("symify")
+        .unwrap()
+        .arg("man")
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(stdout.contains(".TH symify 1"), "got: {stdout}");
+    assert!(
+        stdout.contains(env!("CARGO_PKG_VERSION")),
+        "man page should carry the version, got: {stdout}"
+    );
+    assert!(stdout.contains(".SH NAME"), "got: {stdout}");
+}
+
+#[test]
+fn man_is_hidden_from_help_but_completions_is_not() {
+    let out = Command::cargo_bin("symify")
+        .unwrap()
+        .arg("--help")
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(stdout.contains("completions"), "got: {stdout}");
+    assert!(
+        !stdout.contains("Print a roff man page"),
+        "man should be hidden, got: {stdout}"
+    );
 }
 
 // ----- safety guards ----------------------------------------------------

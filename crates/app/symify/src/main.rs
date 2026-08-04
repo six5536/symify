@@ -21,7 +21,9 @@ use symify_core::{
     Action, Error, FsOp, RunOptions, Verb, config, edit, entry_paths, execute, fs, plan, status,
 };
 
-use crate::cli::{AddArgs, Cli, Command, ListArgs, QueryArgs, RemoveArgs, RunArgs};
+use crate::cli::{
+    AddArgs, Cli, Command, CompletionsArgs, ListArgs, QueryArgs, RemoveArgs, RunArgs,
+};
 
 fn main() -> ExitCode {
     match run() {
@@ -36,8 +38,9 @@ fn main() -> ExitCode {
 fn run() -> symify_core::Result<u8> {
     let cli = Cli::parse_from(cli::normalize_args(std::env::args()));
     if cli.version {
-        // Bare version number — easier to consume from scripts than `name x.y.z`.
-        println!("{}", env!("CARGO_PKG_VERSION"));
+        // `name x.y.z`, the near-universal CLI convention, so pasted output is
+        // self-identifying in bug reports.
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         return Ok(output::EXIT_OK);
     }
     let Some(command) = cli.command else {
@@ -56,7 +59,25 @@ fn run() -> symify_core::Result<u8> {
         Command::Add(args) => run_add(args),
         Command::Remove(args) => run_remove(args),
         Command::List(args) => run_list(args),
+        Command::Completions(args) => run_completions(args),
+        Command::Man => run_man(),
     }
+}
+
+/// Write a shell completion script for `shell` to stdout.
+fn run_completions(args: CompletionsArgs) -> symify_core::Result<u8> {
+    let mut cmd = Cli::command();
+    let name = cmd.get_name().to_string();
+    clap_complete::generate(args.shell, &mut cmd, name, &mut io::stdout());
+    Ok(output::EXIT_OK)
+}
+
+/// Write a roff man page to stdout, for packaging into release archives.
+fn run_man() -> symify_core::Result<u8> {
+    clap_mangen::Man::new(Cli::command())
+        .render(&mut io::stdout())
+        .map_err(stdout_err)?;
+    Ok(output::EXIT_OK)
 }
 
 /// Whether a command mutates the filesystem or config (so it should be refused
