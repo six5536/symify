@@ -11,7 +11,8 @@ The core is written in Rust and shipped two ways:
 - **npm** — the `symify` package: prebuilt per-platform binaries with a
   thin JS launcher.
 
-> Status: not released. Breaking changes are allowed.
+> Status: released, pre-1.0. Minor versions may contain breaking changes, and
+> `symify-core`'s API is not stable yet.
 
 ## Mental model
 

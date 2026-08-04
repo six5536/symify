@@ -2,8 +2,9 @@
 
 ## Supported versions
 
-symify is pre-1.0 and not yet released. Security fixes target the latest release
-(once published) and the `main` branch; there are no supported older versions.
+symify is pre-1.0. Security fixes target the **latest release** and the `main`
+branch only — older versions are not patched, so upgrade to the latest release
+to pick up a fix.
 
 ## Reporting a vulnerability
 

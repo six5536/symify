@@ -3,7 +3,8 @@
 Thanks for your interest in symify. This guide covers the development setup, the
 day-to-day workflow, and how a release is cut.
 
-> Status: not released. Breaking changes are allowed.
+> Status: released, pre-1.0. Minor versions may contain breaking changes, and
+> `symify-core`'s API is not stable yet.
 
 ## Prerequisites
 

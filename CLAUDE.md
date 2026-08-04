@@ -31,5 +31,5 @@
 
 # Project Status
 
-- Not released.
-- Breaking changes allowed.
+- Released; pre-1.0, so minor versions may carry breaking changes.
+- `symify-core`'s API is not stable yet.
