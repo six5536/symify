@@ -10,11 +10,15 @@
 
 # Docs / tooling
 
-- Man page + shell completions, generated from the clap definition
-  (`clap_mangen` / `clap_complete`). Deferred from PLAN-004 (finish docs): needs
-  new build-dependencies and packaging wiring. Revisit when packaging the release.
+- ~~Man page + shell completions, generated from the clap definition
+  (`clap_mangen` / `clap_complete`).~~ **Done (PLAN-006).** Shipped as a runtime
+  `symify completions <shell>` verb — the only form that reaches npm and
+  `cargo install` users, since release archives reach neither — plus a hidden
+  `symify man` used to generate the man page into the release archives.
 
 # Brand
 
 - symc
+- symk
 - symsync
+- slynk

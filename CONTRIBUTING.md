@@ -17,7 +17,7 @@ Toolchains are pinned and managed with [mise](https://mise.jdx.dev/):
 
 ```sh
 mise install     # install all pinned tools
-npm install      # install the JS workspace (launcher + platform packages)
+npm install      # install the JS workspace (the launcher package)
 ```
 
 A plain `cargo build` needs neither Node nor `typify` — the generated config
@@ -43,7 +43,16 @@ npm run coverage:summary # coverage summary in the terminal
 npm run coverage:check   # enforce the gate: line coverage >= 90% per crate
 
 npm run test:launcher   # node test for the npm launcher shim
+
+npm run verify-version  # every version in the tree agrees (14 locations)
+npm run release <ver>   # bump + verify + commit + tag (does not push)
 ```
+
+Only the launcher (`packages/symify`) is an npm workspace. The four
+platform-binary packages deliberately are not: npm enforces their `os`/`cpu`
+fields on workspace members unconditionally, so including them made a plain
+`npm install` fail with `EBADPLATFORM` on every host. Nothing needs them to be
+members — `set-version` and the release workflow address them by path.
 
 Before opening a PR, the same checks CI runs should pass locally:
 
@@ -125,12 +134,53 @@ existing crates first. When you do add one, use the latest version at the time.
 ## Releasing
 
 Releases are tag-driven (`.github/workflows/release.yml`, triggered by a `v*`
-tag):
+tag).
 
-1. Bump every package and crate to the new version in lockstep:
-   `npm run set-version <version>`.
-2. Update the changelog and tag the release (`git tag vX.Y.Z`).
-3. The release workflow cross-builds the per-platform binaries
-   (`cargo-zigbuild` for Linux, native `cargo` on macOS), stages each into its
-   platform package, then publishes the platform packages and the launcher to
-   npm, and `symify-core` followed by `symify` to crates.io.
+**1. Write the changelog.** Add a `## [X.Y.Z]` section to `CHANGELOG.md`
+(promote `[Unreleased]` if that is where the notes already are). This is not
+optional — both `npm run release` and the release workflow refuse a version they
+cannot find a section for, and the section becomes the GitHub release notes.
+
+**2. Cut the release commit and tag.**
+
+```sh
+npm run release X.Y.Z
+```
+
+That sets the version everywhere in lockstep (Cargo workspace, the internal
+`symify-core` pin, all five `package.json` files, and **both lockfiles**),
+verifies it landed consistently, then commits and tags. It deliberately stops
+there.
+
+**3. Review, then push.**
+
+```sh
+git show vX.Y.Z
+git push --follow-tags
+```
+
+Pushing the tag is what triggers the publish, and publishes cannot be undone
+(crates.io never; npm after 72 hours).
+
+**4. The workflow takes over**, in this order:
+
+1. `meta` — the tag must match every version in the tree and have a changelog
+   section.
+2. `checks` — the full CI gate, via the shared reusable workflow.
+3. `build` — cross-build four binaries (`cargo-zigbuild` for the static-musl
+   Linux targets, native `cargo` on macOS) and assert the Linux ones are static.
+4. `publish` — smoke-test the binary, dry-run every publish, then publish the
+   platform packages, then the launcher, then
+   `cargo publish --workspace --locked`.
+5. `github-release` — archives with the man page and completions, `SHA256SUMS`,
+   and notes from the changelog.
+
+A prerelease tag (`vX.Y.Z-rc.1`) publishes to npm under the `next` dist-tag and
+is marked as a prerelease on GitHub, so it never becomes `latest`.
+
+### Version consistency
+
+`npm run verify-version [version]` checks that the Cargo workspace, the
+`symify-core` pin, every `package.json`, the launcher's `optionalDependencies`,
+`Cargo.lock` and `package-lock.json` all agree — 14 locations in total. It runs
+in CI and again against the tag at release time.

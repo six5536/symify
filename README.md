@@ -1,5 +1,11 @@
 # symify
 
+[![CI](https://github.com/six5536/symify/actions/workflows/ci.yml/badge.svg)](https://github.com/six5536/symify/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/symify.svg)](https://crates.io/crates/symify)
+[![npm](https://img.shields.io/npm/v/@six5536/symify.svg)](https://www.npmjs.com/package/@six5536/symify)
+[![docs.rs](https://img.shields.io/docsrs/symify-core)](https://docs.rs/symify-core)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 symify keeps files in sync between a working location and a backing repository.
 Adding a file takes one command:
 `symify ~/.zshrc` moves it into the repository and links it back, so it keeps
@@ -22,8 +28,16 @@ There are two locations:
 
 ```sh
 npm install -g @six5536/symify   # prebuilt binary, Linux/macOS
-cargo install symify             # from source, any platform with a Rust toolchain
+cargo install symify             # from source, needs a Rust toolchain
 ```
+
+Prebuilt binaries cover Linux and macOS on `x64` and `arm64`. The Linux builds
+are statically linked against musl, so they need no particular glibc version and
+run on Alpine too.
+
+**Windows is not supported yet.** The code is written to be portable and the
+platform-specific paths exist, but no Windows binary is built or tested, so
+building from source there is at your own risk.
 
 ## Quickstart
 
@@ -98,6 +112,7 @@ autocomplete and validation, and documents every field.
 | `sync`           | `live` → `store` | Bring your live files into the store.              |
 | `deploy`         | `store` → `live` | Set a machine up from the store.                   |
 | `status`         | read-only        | Report the state of each entry.                    |
+| `completions <shell>` | read-only   | Print a shell completion script (bash, zsh, fish, PowerShell, elvish). |
 
 - `symify <path>` is shorthand for `symify add <path>`, since adding is the
   common case. (A path named like a verb, e.g. `status`, is read as that verb;
@@ -120,6 +135,16 @@ autocomplete and validation, and documents every field.
 
 Run `symify <command> --help` for the full reference and exit codes, or
 `symify -V` for the version.
+
+To enable completions, write the script somewhere your shell reads. For example,
+with bash:
+
+```sh
+symify completions bash > ~/.local/share/bash-completion/completions/symify
+```
+
+A man page ships in the archives attached to each
+[GitHub release](https://github.com/six5536/symify/releases).
 
 ## Safety
 

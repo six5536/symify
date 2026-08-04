@@ -315,9 +315,11 @@ symify list            [-m MAP]... [-c FILE]... [--entries] [--json]            
 symify sync            [-m MAP]... [-c FILE]... [--dry-run] [-y] [--checksum] [--modify-window N] [--json]
 symify deploy          [-m MAP]... [-c FILE]... [--dry-run] [-y] [--checksum] [--modify-window N] [--json]
 symify status          [-m MAP]... [-c FILE]... [--checksum] [--modify-window N] [--json]
+symify completions <SHELL>   (bash | zsh | fish | powershell | elvish)
+symify man             (hidden; roff to stdout, for packaging)
 
 Global: --allow-root  (permit mutating verbs to run as root; refused otherwise)
-        -V, --version (print the bare version number and exit)
+        -V, --version (print `symify x.y.z` and exit)
 
 Bare `symify` (no command) prints help and exits 0.
 ```
@@ -330,8 +332,15 @@ Bare `symify` (no command) prints help and exits 0.
   token unless that token is a known subcommand or alias; a leading `--` disables
   the rewrite. So `symify status` is still the `status` verb — use `symify add
   status` to track a file literally named `status`.
-- `-V, --version` — global; prints the bare version number (just `x.y.z`, for
-  scripts) and exits.
+- `-V, --version` — global; prints `symify x.y.z` and exits. Rendered by hand
+  rather than by clap's built-in flag, so it stays `global = true` (i.e.
+  `symify sync -V` works).
+- `completions <shell>` — writes a completion script to stdout. Generated from
+  the clap definition, so it cannot drift from the CLI. `man` does the same for
+  a roff man page and is hidden: it exists for packaging, not daily use.
+  Both names are in the `SUBCOMMANDS` shadow list, without which the bare-path
+  shortcut would rewrite `symify completions bash` to `symify add completions
+  bash`.
 - `-m, --mapping` — repeatable filter on the run/query verbs (omit = all);
   a single value on `add`/`remove` defaulting to the sole mapping. Unknown name:
   `add` creates the mapping, every other verb errors.
@@ -487,26 +496,53 @@ packages/
   Descriptive filenames (no `index.ts` unless necessary, per project rules).
 - **Version lockstep**: launcher + all platform packages share one version and
   publish atomically.
-- **Unsupported platform** (no matching optional dep — e.g. Windows in v1, musl):
-  fail with a clear, actionable message listing supported platforms and pointing
-  to `cargo install symify`. **No** auto-download / build-from-source fallback in
-  v1.
+- **Unsupported platform** (no matching optional dep — e.g. Windows in v1, or a
+  32-bit or non-x86/ARM architecture): fail with a clear, actionable message
+  listing supported platforms and pointing to `cargo install symify`. **No**
+  auto-download / build-from-source fallback in v1. Note the Linux packages are
+  static musl builds, so they cover glibc and musl hosts alike — libc is not a
+  dimension of this matrix.
 
 ### Platform matrix (v1)
 
-Ships **Unix only**: Linux `x86_64`/`aarch64` (gnu) + macOS `x86_64`/`aarch64`.
+Ships **Unix only**: Linux `x86_64`/`aarch64` (**static musl**) + macOS
+`x86_64`/`aarch64`.
+
+Linux is statically linked against musl rather than dynamically against glibc.
+It measured marginally *smaller* than the glibc build (the static libc is offset
+by dropping the PIE's dynamic-linking machinery), carries no glibc floor to pin
+or verify, and runs on Alpine. `cargo-zigbuild` provides the cross C compiler
+that `blake3`'s NEON code needs; plain `rust-lld` cannot link the aarch64 musl
+target for that reason. zigbuild's musl output is non-PIE, which is accepted
+for a local CLI with no network input.
+
 **Windows is designed-for but unshipped** — adding it is a build-target +
 symlink-privilege task (Developer Mode / elevation, with `sync`-mode copy as the
-no-privilege fallback), not a rewrite. A static **musl** Linux build can be added
-if the npm story needs it.
+no-privilege fallback), not a rewrite.
 
-### CI/CD (`.github/workflows`, currently absent)
+### CI/CD (`.github/workflows`)
 
-- **PR / push**: `cargo fmt --check`, `clippy`, `nextest`; `codegen:check`
-  (regenerate Rust from the schema, fail on diff).
-- **Release (tag)**: cross-build binaries (`cargo-zigbuild` or `cross`), assemble
-  platform packages, atomically `npm publish` launcher + platform packages,
-  `cargo publish`.
+All checks live in a reusable `workflow_call` workflow (`checks.yml`), called by
+both `ci.yml` and `release.yml`, so the release gate cannot drift from CI.
+
+- **`checks.yml`**: `cargo fmt --check`, `clippy -D warnings`, `nextest`,
+  doctests, `cargo doc -D warnings`, the npm launcher tests, version
+  consistency, the per-crate coverage gate, `codegen:check` (schema drift), and
+  `cargo-deny` for licences/bans/sources.
+- **`ci.yml`**: calls `checks.yml` on push and PR.
+- **`audit.yml`**: scheduled `cargo-deny check advisories`, opening an issue
+  rather than failing builds — advisories are exogenous and must not block an
+  unrelated PR.
+- **`release.yml`** (tag `v*`): verify the tag against every version in the tree
+  and against a `CHANGELOG.md` section → run `checks.yml` in full → cross-build
+  the four binaries and assert the Linux ones are static → dry-run every publish
+  → publish platform packages, then the launcher, then
+  `cargo publish --workspace --locked` → create a GitHub Release with archives,
+  a man page, completions and `SHA256SUMS`. Prerelease tags publish under the
+  npm `next` dist-tag and are flagged as prereleases.
+
+Cross-registry atomicity is impossible, so the guarantee is *ordered,
+dry-run-gated and recoverable* rather than truly atomic.
 
 ## Testing
 
@@ -562,9 +598,10 @@ behavior (symlink privilege, path handling) is gated until Windows is shipped.
 Named as recommendations only — per project rules, adding a dependency requires
 explicit approval and using the latest version at implementation time.
 
-- Rust: `clap` (derive), `serde`, `serde_json`, `toml`, `toml_edit`
-  (format-preserving config edits), `thiserror`, `directories` (Windows-aware
-  home/dirs), `blake3` (`sync`-mode content equality).
+- Rust: `clap` (derive), `clap_complete` + `clap_mangen` (completions and man
+  page generated from the same clap definition), `serde`, `serde_json`, `toml`,
+  `toml_edit` (format-preserving config edits), `thiserror`, `directories`
+  (Windows-aware home/dirs), `blake3` (`sync`-mode content equality).
 - Rust (dev): `tempfile`, `assert_cmd` for CLI tests.
 - Tooling: `cargo-typify` (schema → Rust codegen), `cargo-zigbuild`,
   `cargo-nextest`.
