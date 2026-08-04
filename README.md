@@ -122,9 +122,11 @@ autocomplete and validation, and documents every field.
   config in place, preserving comments. `remove --no-restore` leaves the link.
 - `sync`/`deploy`/`status`/`list` take `-m <mapping>` (repeatable) to act on
   specific mappings; omit it for all.
-- `sync`/`deploy`/`add`/`remove` take `--dry-run`; every command takes `--json`
-  and `-c <file>` (repeatable; replaces the usual config locations). There's no
-  separate `init`; any command creates a default config if none exists.
+- `sync`/`deploy`/`add`/`remove` take `--dry-run`. Every verb that reads your
+  config — all of the above plus `status` and `list` — takes `--json` and
+  `-c <file>` (repeatable; replaces the usual config locations) and creates a
+  default config if none exists, so there's no separate `init`. `completions`
+  reads no config and takes none of these.
 - In `sync` mode, `sync`/`deploy` copy only changed files (a size+mtime
   quick-check, with mtime preserved on copy). They are **additive** — they never
   delete, so if you remove a file from the source, delete the stale copy on the
@@ -134,8 +136,8 @@ autocomplete and validation, and documents every field.
     coarse-granularity filesystems (default 0 = exact). `status` accepts
     `--checksum`/`--modify-window` too, so its report matches a run.
 
-Run `symify <command> --help` for the full reference and exit codes, or
-`symify -V` for the version.
+Run `symify <command> --help` for the full flag reference, or `symify -V` for the
+version. Every command exits `0` when clean, `1` on drift, and `2` on error.
 
 To enable completions, write the script somewhere your shell reads. For example,
 with bash:

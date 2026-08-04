@@ -35,8 +35,8 @@ First release.
 - Backups on overwrite. The default `conflict = "backup"` moves the file being
   replaced to `<name>.<timestamp>.bak` first. `skip` and `replace` are the other
   two policies.
-- `--json` on every verb, `--dry-run` on the mutating ones, and exit codes 0 for
-  clean, 1 for drift, 2 for error.
+- `--json` on every config-reading verb, `--dry-run` on the mutating ones, and
+  exit codes 0 for clean, 1 for drift, 2 for error.
 - `symify completions <shell>` for bash, zsh, fish, PowerShell and elvish. A man
   page ships in the release archives.
 - Prebuilt binaries on npm (`symify`) for Linux and macOS, x64 and arm64.

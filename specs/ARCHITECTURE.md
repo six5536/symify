@@ -44,8 +44,9 @@ name *locations*, never roles.
 | `deploy` | `store` → `live` | Install the store onto a machine. |
 | `status` | read-only        | Report per-entry state; never mutates. |
 
-There is no `init` verb: any command auto-creates a default config (from the
-starter template, `live = ~`, `store = ~/dotfiles`) when none exists. Mappings
+There is no `init` verb: any config-reading verb auto-creates a default config
+(from the starter template, `live = ~`, `store = ~/dotfiles`) when none exists.
+`completions` and `man` never touch the config at all. Mappings
 are selected with `-m/--mapping` (repeatable filter on the run/query verbs;
 single value defaulting to the sole mapping on `add`/`remove`).
 
@@ -64,8 +65,9 @@ for coarse filesystems). The copy is **additive** — only changed files are
 copied, and destination-only files are never deleted. See
 [sync mode](#sync-mode-incremental-copy).
 
-`--dry-run` is available on `sync` and `deploy`. All verbs support human-readable
-and `--json` output.
+`--dry-run` is available on `sync`, `deploy`, `add` and `remove`. Every verb that
+reads config supports human-readable and `--json` output; `completions` and `man`
+read no config and take neither `--json` nor `-c`.
 
 ## Overview pipeline
 
@@ -351,7 +353,8 @@ Bare `symify` (no command) prints help and exits 0.
 - `-y, --yes` — pre-approve unrecoverable recursive deletes (`sync`/`deploy`/`add`);
   see Safety. Required for such a plan when not on a TTY (piped / `--json` / CI).
 - `--allow-root` — global; permit a mutating verb to run as root (otherwise refused).
-- `--json` — machine-readable output (every verb).
+- `--json` — machine-readable output (every config-reading verb; not
+  `completions`/`man`).
 
 ### Config mutation (`add` / `remove`)
 
@@ -366,9 +369,9 @@ in the primary file. `add` then **adopts** the new entry (a one-entry `sync`);
 ### Auto-init
 
 There is no `init` verb. In default mode (no `-c`), when the default config is
-absent, every command first creates it from the starter template (`live = ~`,
-`store = ~/dotfiles`, a `dotfiles` mapping; with a `#:schema` line for editor
-validation), printing `Created <path> (defaults).`, then proceeds. An
+absent, every config-reading verb first creates it from the starter template
+(`live = ~`, `store = ~/dotfiles`, a `dotfiles` mapping; with a `#:schema` line
+for editor validation), printing `Created <path> (defaults).`, then proceeds. An
 explicitly-named `-c <file>` that is missing stays an error — auto-init never
 fabricates a file the user named.
 
@@ -386,13 +389,23 @@ entries failed, or config/IO error).
 
 ### `status` reporting
 
-Read-only, direction-neutral. Per entry it reports a state label:
+Read-only, direction-neutral. Per entry it reports one `StatusLabel`, never
+claiming which direction you should run:
 
-- `symlink`: `ok`, or specific drift (`missing`, `wrong-target`,
-  `unadopted` — `S` is a real file, etc.).
-- `sync` (copy): `ok` (quick-check or `--checksum` equal), `differs`,
-  `live-missing`, `store-missing` — without claiming which direction you should
-  run.
+| Label | `symlink` | `sync` | Meaning |
+|---|---|---|---|
+| `ok` | ✓ | ✓ | A correct link; or, in copy mode, content in sync. |
+| `unadopted` | ✓ | — | `S` is a real file, not yet a link. |
+| `wrong-target` | ✓ | — | `S` is a symlink pointing somewhere else. |
+| `differs` | — | ✓ | Both sides exist but differ (quick-check or `--checksum`). |
+| `live-missing` | ✓ | ✓ | `S` is absent. |
+| `store-missing` | ✓ | ✓ | `D` is absent. |
+| `missing` | ✓ | ✓ | Both sides are absent. |
+| `disabled` | ✓ | ✓ | `value = false`. |
+| `failed` | ✓ | ✓ | Unusable, e.g. refused by a planner guard. |
+
+`disabled` counts towards the `ok` total in the summary line; only drift and
+failures move the exit code off `0`.
 
 ## Rust crate layout
 
@@ -414,6 +427,7 @@ without touching the planner.
 | `plan`   | Pure planner. Resolves the merged config + FS state into an ordered `Vec<Action>` per verb. No mutation. |
 | `fs`     | Executor + the platform abstraction for link/copy/move/backup. Apply `Action`s. |
 | `status` | Derive per-entry status labels from the plan. |
+| `clock`  | Injected `now` provider, so `.<timestamp>.bak` names are pinnable in tests. |
 | `error`  | Error type (`thiserror`). |
 
 `Action` variants (illustrative): `AlreadyOk`, `Disabled`, `Skip`, `Conflict`,
@@ -429,7 +443,8 @@ Depends on `symify-core`. Binary name `symify`.
 | Module    | Responsibility |
 |-----------|----------------|
 | `main.rs` | Entry point, wiring, exit codes. |
-| `cli`     | Argument parsing (`clap` derive). |
+| `cli`     | Argument parsing (`clap` derive), including the bare-path shortcut. |
+| `confirm` | The `[y/N]` gate for unrecoverable deletes (see [Safety](#safety)); keeps the prompt out of the pure planner. |
 | `output`  | Renders a single `serde`-serializable per-entry result model via two renderers — human and `--json`. |
 
 ### Publishing
@@ -594,18 +609,20 @@ under `cargo-nextest` (`npm test`).
 Tests run on **Linux and macOS** (the v1 ship targets). Windows-specific
 behaviour (symlink privilege, path handling) is gated until Windows is shipped.
 
-## Recommended dependencies
+## Dependencies
 
-Named as recommendations only — per project rules, adding a dependency requires
-explicit approval and using the latest version at implementation time.
+Adding one requires explicit approval and the latest version at the time, per
+project rules. The current set:
 
 - Rust: `clap` (derive), `clap_complete` + `clap_mangen` (completions and man
   page generated from the same clap definition), `serde`, `serde_json`, `toml`,
   `toml_edit` (format-preserving config edits), `thiserror`, `directories`
   (Windows-aware home/dirs), `blake3` (`sync`-mode content equality).
-- Rust (dev): `tempfile`, `assert_cmd` for CLI tests.
-- Tooling: `cargo-typify` (schema → Rust codegen), `cargo-zigbuild`,
-  `cargo-nextest`.
+- Rust (dev): `tempfile`, `assert_cmd` for CLI tests, `insta` for snapshot
+  assertions on human output.
+- Tooling (pinned in `.mise.toml`): `cargo-typify` (schema → Rust codegen),
+  `cargo-zigbuild` and `zig` (the cross C compiler the musl targets need),
+  `cargo-nextest`, `cargo-llvm-cov`.
 
 ## Deferred (post-v1)
 

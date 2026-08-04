@@ -9,4 +9,6 @@
 - [ ] `cargo nextest run --workspace` passes
 - [ ] `cargo test --doc --workspace` passes
 - [ ] `npm run codegen:check` passes (if the schema changed)
+- [ ] `npm run test:launcher` and `npm run verify-version` pass
+- [ ] `npm run coverage:check` passes (per-crate line coverage >= 90%)
 - [ ] Docs updated (README / specs / rustdoc) where behaviour changed

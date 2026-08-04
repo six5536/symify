@@ -12,8 +12,9 @@ Toolchains are pinned and managed with [mise](https://mise.jdx.dev/):
 - `rust-toolchain.toml` pins the project toolchain (`1.96.0`, with `rustfmt` and
   `clippy`).
 - `.mise.toml` pins everything else: Node, a `nightly` Rust used only by the
-  coverage job, and the cargo tools (`cargo-nextest`, `cargo-llvm-cov`,
-  `cargo-typify`, `cargo-zigbuild`).
+  coverage job, `zig` (the cross C compiler behind `cargo-zigbuild`, whose
+  version the release workflow reads straight out of this file), and the cargo
+  tools (`cargo-nextest`, `cargo-llvm-cov`, `cargo-typify`, `cargo-zigbuild`).
 
 ```sh
 mise install     # install all pinned tools
@@ -54,7 +55,8 @@ fields on workspace members unconditionally, so including them made a plain
 `npm install` fail with `EBADPLATFORM` on every host. Nothing needs them to be
 members. `set-version` and the release workflow address them by path.
 
-Before opening a PR, the same checks CI runs should pass locally:
+Before opening a PR, run everything CI runs. Note that `npm run lint` is only
+`cargo clippy --workspace` — CI is stricter, so use the full command here:
 
 ```sh
 cargo fmt --all -- --check
@@ -63,7 +65,13 @@ cargo nextest run --workspace
 cargo test --doc --workspace
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 npm run codegen:check
+npm run test:launcher
+npm run verify-version
+npm run coverage:check     # slow; needs the nightly toolchain
 ```
+
+`cargo-deny check licenses bans sources` also gates CI, but only fails when you
+change dependencies.
 
 ## Config schema and codegen
 
