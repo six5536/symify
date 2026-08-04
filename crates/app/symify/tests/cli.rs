@@ -226,6 +226,51 @@ fn add_resolves_relative_path_against_cwd() {
     assert!(fx.config_text().contains("\".zshrc\""));
 }
 
+#[cfg(unix)]
+#[test]
+fn add_relative_path_relativizes_through_a_symlinked_root() {
+    // Regression: a relative argument is made absolute against the CWD, which
+    // the OS reports already resolved through symlinks, while the configured
+    // live root is raw config text. macOS hits this on every temp dir, since
+    // /var is a symlink to /private/var — the shape is built explicitly here so
+    // the case is covered everywhere rather than only on one runner.
+    let tmp = tempfile::tempdir().unwrap();
+    let real = tmp.path().join("real");
+    let live = real.join("live");
+    std::fs::create_dir_all(&live).unwrap();
+    std::fs::create_dir_all(real.join("store")).unwrap();
+
+    let link = tmp.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let config = tmp.path().join("symify.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "[settings]\nlive = \"{}\"\nstore = \"{}\"\nmode = \"symlink\"\nconflict = \"backup\"\n\n[mappings.dotfiles.links]\n",
+            link.join("live").display(),
+            link.join("store").display(),
+        ),
+    )
+    .unwrap();
+    std::fs::write(live.join(".zshrc"), b"z").unwrap();
+
+    Command::cargo_bin("symify")
+        .unwrap()
+        .args(["add", ".zshrc", "-c"])
+        .arg(&config)
+        .current_dir(link.join("live"))
+        .assert()
+        .success();
+
+    let text = std::fs::read_to_string(&config).unwrap();
+    assert!(
+        text.contains("\".zshrc\""),
+        "key should be relative to the live root, got: {text}"
+    );
+    assert!(is_symlink(&live.join(".zshrc")));
+}
+
 #[test]
 fn add_file_outside_live_uses_absolute_key() {
     let fx = Fx::new("backup", &[]);

@@ -349,11 +349,34 @@ fn sole_mapping(resolved: &ResolvedConfig) -> symify_core::Result<String> {
 
 /// Relativize an absolute path against the mapping's live root; fall back to an
 /// absolute key when the path is outside it.
+///
+/// A plain prefix match is not enough. A relative argument is made absolute
+/// against the process CWD, which the OS reports already resolved through any
+/// symlinks, while the live root comes from config text and is not. So the two
+/// can spell the same directory differently — on macOS always, since `/var` is a
+/// symlink to `/private/var` and temp dirs live under it. When the textual match
+/// fails we retry on canonical forms before giving up and writing an absolute
+/// key.
 fn derive_key(abs: &Path, live: &Path) -> String {
-    match abs.strip_prefix(live) {
-        Ok(rel) => rel.to_string_lossy().into_owned(),
-        Err(_) => abs.to_string_lossy().into_owned(),
+    if let Ok(rel) = abs.strip_prefix(live) {
+        return rel.to_string_lossy().into_owned();
     }
+    if let Some(canonical) = canonical_parent(abs)
+        && let Ok(live) = live.canonicalize()
+        && let Ok(rel) = canonical.strip_prefix(&live)
+    {
+        return rel.to_string_lossy().into_owned();
+    }
+    abs.to_string_lossy().into_owned()
+}
+
+/// `abs` with its parent directory canonicalized, keeping the final component
+/// as written. Only the parent is resolved: canonicalizing the whole path would
+/// follow the entry itself when it is a symlink, which is not what the key
+/// should name. `None` when the parent does not exist or cannot be resolved.
+fn canonical_parent(abs: &Path) -> Option<PathBuf> {
+    let name = abs.file_name()?;
+    Some(abs.parent()?.canonicalize().ok()?.join(name))
 }
 
 /// Whether `remove --restore` would replace a managed link at `live` with a
@@ -427,6 +450,27 @@ mod tests {
         );
         // Outside the live root keeps an absolute key.
         assert_eq!(derive_key(Path::new("/etc/hosts"), live), "/etc/hosts");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn derive_key_relativizes_through_a_symlinked_live_root() {
+        // The resolved path and the configured root spell the same directory
+        // differently (macOS /var -> /private/var). The textual prefix match
+        // fails; the canonical retry must still produce a relative key.
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        let link = tmp.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        assert_eq!(derive_key(&real.join(".bashrc"), &link), ".bashrc");
+        // Genuinely outside the root still falls back to an absolute key.
+        let outside = tmp.path().join("elsewhere.txt");
+        assert_eq!(
+            derive_key(&outside, &link),
+            outside.to_string_lossy().into_owned()
+        );
     }
 
     fn mapping(name: &str) -> ResolvedMapping {
