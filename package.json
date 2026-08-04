@@ -3,13 +3,13 @@
     "private": true,
     "description": "Keep files in sync between a working location and a backing repository, via symlinks or copies.",
     "workspaces": [
-        "packages/*"
+        "packages/symify"
     ],
     "scripts": {
         "build": "cargo build --workspace",
         "build:all": "npm run build:linux-x64 && npm run build:linux-arm64 && npm run build:darwin-x64 && npm run build:darwin-arm64",
-        "build:linux-x64": "rustup target add x86_64-unknown-linux-gnu && mise exec -- cargo zigbuild --release --target x86_64-unknown-linux-gnu -p symify && install -m 0755 target/x86_64-unknown-linux-gnu/release/symify packages/symify-linux-x64/bin/symify",
-        "build:linux-arm64": "rustup target add aarch64-unknown-linux-gnu && mise exec -- cargo zigbuild --release --target aarch64-unknown-linux-gnu -p symify && install -m 0755 target/aarch64-unknown-linux-gnu/release/symify packages/symify-linux-arm64/bin/symify",
+        "build:linux-x64": "rustup target add x86_64-unknown-linux-musl && mise exec -- cargo zigbuild --release --target x86_64-unknown-linux-musl -p symify && install -m 0755 target/x86_64-unknown-linux-musl/release/symify packages/symify-linux-x64/bin/symify",
+        "build:linux-arm64": "rustup target add aarch64-unknown-linux-musl && mise exec -- cargo zigbuild --release --target aarch64-unknown-linux-musl -p symify && install -m 0755 target/aarch64-unknown-linux-musl/release/symify packages/symify-linux-arm64/bin/symify",
         "build:darwin-x64": "rustup target add x86_64-apple-darwin && mise exec -- cargo zigbuild --release --target x86_64-apple-darwin -p symify && install -m 0755 target/x86_64-apple-darwin/release/symify packages/symify-darwin-x64/bin/symify",
         "build:darwin-arm64": "rustup target add aarch64-apple-darwin && mise exec -- cargo zigbuild --release --target aarch64-apple-darwin -p symify && install -m 0755 target/aarch64-apple-darwin/release/symify packages/symify-darwin-arm64/bin/symify",
         "dev": "cargo run -p symify --",
@@ -22,6 +22,8 @@
         "coverage:check": "cargo +nightly llvm-cov clean --workspace && cargo +nightly llvm-cov nextest --workspace --no-report && cargo +nightly llvm-cov report --summary-only --ignore-filename-regex 'generated\\.rs|crates/app' --fail-under-lines 90 && cargo +nightly llvm-cov report --summary-only --ignore-filename-regex 'generated\\.rs|crates/lib' --fail-under-lines 90",
         "test:launcher": "node --test packages/symify/test/*.test.js",
         "set-version": "node scripts/set-version.mjs",
+        "verify-version": "node scripts/verify-version.mjs",
+        "release": "node scripts/release.mjs",
         "codegen": "cargo typify --no-builder --additional-derive Clone --additional-derive PartialEq --additional-derive Eq schema/symify.schema.json --output crates/lib/symify-core/src/model/generated.rs",
         "codegen:check": "npm run codegen && git diff --exit-code -- crates/lib/symify-core/src/model/generated.rs"
     },

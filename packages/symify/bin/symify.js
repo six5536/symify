@@ -5,7 +5,7 @@
 // forwarding arguments, stdio, and the exit code.
 
 const { spawnSync } = require("node:child_process");
-const { resolveBinary } = require("../lib/binary");
+const { resolveBinary, exitCode } = require("../lib/binary");
 
 let binary;
 try {
@@ -22,4 +22,4 @@ if (result.error) {
   process.exit(1);
 }
 
-process.exit(result.status === null ? 1 : result.status);
+process.exit(exitCode(result));

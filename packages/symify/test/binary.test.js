@@ -2,7 +2,7 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { selectPackage, binaryName, resolveBinary } = require("../lib/binary");
+const { selectPackage, binaryName, resolveBinary, exitCode } = require("../lib/binary");
 
 test("selectPackage maps supported platforms", () => {
   assert.strictEqual(selectPackage("linux", "x64"), "@six5536/symify-linux-x64");
@@ -29,6 +29,23 @@ test("resolveBinary returns the resolved path for a supported platform", () => {
 
 test("resolveBinary errors clearly on unsupported platform", () => {
   assert.throws(() => resolveBinary("win32", "x64", () => "unused"), /No prebuilt symify binary for win32-x64/);
+});
+
+test("exitCode forwards a normal exit status", () => {
+  assert.strictEqual(exitCode({ status: 0, signal: null }), 0);
+  assert.strictEqual(exitCode({ status: 2, signal: null }), 2);
+});
+
+test("exitCode encodes a signal death as 128 + signum", () => {
+  const signals = { SIGINT: 2, SIGTERM: 15 };
+  // Ctrl-C should surface as 130, the shell convention — not a misleading 1.
+  assert.strictEqual(exitCode({ status: null, signal: "SIGINT" }, signals), 130);
+  assert.strictEqual(exitCode({ status: null, signal: "SIGTERM" }, signals), 143);
+});
+
+test("exitCode falls back to 1 for an unknown signal or null status", () => {
+  assert.strictEqual(exitCode({ status: null, signal: "SIGNOPE" }, {}), 1);
+  assert.strictEqual(exitCode({ status: null, signal: null }), 1);
 });
 
 test("resolveBinary errors clearly when the platform package is missing", () => {

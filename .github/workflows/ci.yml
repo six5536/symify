@@ -5,101 +5,15 @@ on:
     branches: [main, master]
   pull_request:
 
-# sccache (configured in .cargo/config.toml) is bypassed in CI; we use
-# Swatinem/rust-cache for caching instead.
-env:
-  CARGO_BUILD_RUSTC_WRAPPER: ""
-  CARGO_TERM_COLOR: always
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
-    # ubuntu is covered by the `coverage` job below (it runs the full suite while
-    # measuring), so the plain matrix only needs the cross-platform macos check.
-    name: test (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.96.0
-        with:
-          components: rustfmt, clippy
-
-      - uses: Swatinem/rust-cache@v2
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
-
-      - name: Format
-        run: cargo fmt --all -- --check
-
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: Test
-        run: cargo nextest run --workspace
-
-      - name: Doctests
-        run: cargo test --doc --workspace
-
-      - name: Docs (warnings as errors)
-        run: cargo doc --workspace --no-deps
-        env:
-          RUSTDOCFLAGS: -D warnings
-
-      - name: Launcher test
-        run: node --test packages/symify/test/*.test.js
-
-  coverage:
-    # Runs the full test suite on ubuntu under instrumentation and enforces the
-    # per-crate line-coverage gate. Uses nightly so the `coverage(off)` markers on
-    # untestable glue take effect (stable ignores them).
-    name: coverage (ubuntu, nightly)
-    runs-on: ubuntu-latest
-    env:
-      CARGO_BUILD_RUSTC_WRAPPER: ""
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install nightly toolchain
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: llvm-tools-preview
-
-      - uses: Swatinem/rust-cache@v2
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      - name: Install cargo-llvm-cov and cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-llvm-cov,cargo-nextest
-
-      - name: Coverage gate (per-crate line >= 90%)
-        run: npm run coverage:check
-
-  schema:
-    name: schema codegen drift
-    runs-on: ubuntu-latest
-    env:
-      CARGO_BUILD_RUSTC_WRAPPER: ""
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.96.0
-      - uses: Swatinem/rust-cache@v2
-      - name: Install cargo-typify
-        run: cargo install cargo-typify --version 0.6.2 --locked
-      - name: Regenerate model and check for drift
-        run: npm run codegen:check
+  # All checks live in the reusable workflow so release.yml runs exactly the
+  # same gate before it publishes.
+  checks:
+    uses: ./.github/workflows/checks.yml

@@ -9,15 +9,77 @@ env:
   CARGO_BUILD_RUSTC_WRAPPER: ""
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
+# Never run two releases at once, and never cancel one in flight — a half-done
+# publish is the worst outcome.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Is the tag coherent? Cheap checks first, so a typo fails in seconds.
+  # ---------------------------------------------------------------------------
+  meta:
+    name: verify tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+      npm_tag: ${{ steps.v.outputs.npm_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version from tag
+        id: v
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # A semver prerelease has a hyphen after the patch component.
+          if [[ "$version" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "npm_tag=next" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Releasing $version"
+
+      - name: Tag matches every version in the tree
+        run: node scripts/verify-version.mjs "${{ steps.v.outputs.version }}"
+
+      - name: CHANGELOG has a section for this version
+        run: |
+          version='${{ steps.v.outputs.version }}'
+          if ! grep -qF "## [$version]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [$version]' section."
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  # 2. The same gate CI runs. Releases are rare; pay for the full signal.
+  # ---------------------------------------------------------------------------
+  checks:
+    needs: meta
+    uses: ./.github/workflows/checks.yml
+
+  # ---------------------------------------------------------------------------
+  # 3. Build each platform binary.
+  # ---------------------------------------------------------------------------
   build:
     name: build ${{ matrix.pkg }}
+    needs: meta
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, pkg: linux-x64, builder: zigbuild }
-          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu, pkg: linux-arm64, builder: zigbuild }
+          # Linux ships static musl: no glibc floor to track, and it runs on
+          # Alpine too. zigbuild supplies the C cross-compiler that blake3's
+          # NEON code needs (plain rust-lld cannot build aarch64 musl).
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, pkg: linux-x64, builder: zigbuild }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, pkg: linux-arm64, builder: zigbuild }
           - { os: macos-latest, target: x86_64-apple-darwin, pkg: darwin-x64, builder: cargo }
           - { os: macos-latest, target: aarch64-apple-darwin, pkg: darwin-arm64, builder: cargo }
     runs-on: ${{ matrix.os }}
@@ -42,16 +104,27 @@ jobs:
 
       - name: Build (zigbuild)
         if: matrix.builder == 'zigbuild'
-        run: cargo zigbuild --release --target ${{ matrix.target }} -p symify
+        run: cargo zigbuild --release --locked --target ${{ matrix.target }} -p symify
 
       - name: Build (cargo)
         if: matrix.builder == 'cargo'
-        run: cargo build --release --target ${{ matrix.target }} -p symify
+        run: cargo build --release --locked --target ${{ matrix.target }} -p symify
 
       - name: Stage binary into platform package
         run: |
           install -m 0755 "target/${{ matrix.target }}/release/symify" \
             "packages/symify-${{ matrix.pkg }}/bin/symify"
+
+      - name: Assert Linux binaries are statically linked
+        if: matrix.builder == 'zigbuild'
+        run: |
+          bin="packages/symify-${{ matrix.pkg }}/bin/symify"
+          if readelf -l "$bin" | grep -q "program interpreter"; then
+            echo "::error::$bin is dynamically linked; expected a static musl build"
+            readelf -l "$bin" | grep "program interpreter"
+            exit 1
+          fi
+          echo "$bin is static"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -59,13 +132,19 @@ jobs:
           path: packages/symify-${{ matrix.pkg }}/bin/symify
           if-no-files-found: error
 
+  # ---------------------------------------------------------------------------
+  # 4. Publish. Nothing here runs until the tag, the gate, and the builds agree.
+  # ---------------------------------------------------------------------------
   publish:
     name: publish
-    needs: build
+    needs: [meta, checks, build]
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
+      id-token: write # npm provenance
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      NPM_TAG: ${{ needs.meta.outputs.npm_tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -87,19 +166,115 @@ jobs:
             install -m 0755 "artifacts/symify-$pkg/symify" "packages/symify-$pkg/bin/symify"
           done
 
-      - name: Publish platform packages and launcher to npm
+      - name: Smoke-test the built binary
+        run: |
+          actual="$(./packages/symify-linux-x64/bin/symify --version)"
+          expected="symify $VERSION"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::binary reports '$actual', expected '$expected'"
+            exit 1
+          fi
+          echo "$actual"
+
+      - name: Dry-run every publish before doing any of them
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          cargo publish --workspace --locked --dry-run
+          for pkg in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
+            npm publish "packages/symify-$pkg" --dry-run --tag "$NPM_TAG"
+          done
+          npm publish packages/symify --dry-run --tag "$NPM_TAG"
+
+      # Platform packages first: the launcher declares them as
+      # optionalDependencies, so publishing it first would briefly point users at
+      # versions that do not exist yet.
+      - name: Publish platform packages to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           for pkg in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
-            npm publish "packages/symify-$pkg" --access public
+            npm publish "packages/symify-$pkg" --provenance --tag "$NPM_TAG"
           done
-          npm publish packages/symify --access public
 
+      - name: Publish launcher to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish packages/symify --provenance --tag "$NPM_TAG"
+
+      # `--workspace` resolves the symify-core -> symify ordering itself, so no
+      # sleep-and-hope between the two publishes.
       - name: Publish crates to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --workspace --locked
+
+  # ---------------------------------------------------------------------------
+  # 5. GitHub Release: archives, checksums, notes.
+  # ---------------------------------------------------------------------------
+  github-release:
+    name: github release
+    needs: [meta, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.96.0
+
+      - name: Download platform binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate man page and completions
         run: |
-          cargo publish -p symify-core
-          sleep 30  # let crates.io index symify-core before the dependent crate
-          cargo publish -p symify
+          mkdir -p dist/share
+          cargo build --release --locked -p symify
+          ./target/release/symify man > dist/share/symify.1
+          for shell in bash zsh fish powershell elvish; do
+            ./target/release/symify completions "$shell" > "dist/share/symify.$shell"
+          done
+
+      - name: Build archives and checksums
+        run: |
+          mkdir -p dist/out
+          for pkg in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
+            stage="dist/stage/symify-$VERSION-$pkg"
+            mkdir -p "$stage"
+            install -m 0755 "artifacts/symify-$pkg/symify" "$stage/symify"
+            cp README.md LICENSE CHANGELOG.md "$stage/"
+            cp -r dist/share "$stage/share"
+            tar -czf "dist/out/symify-$VERSION-$pkg.tar.gz" -C dist/stage "symify-$VERSION-$pkg"
+          done
+          cd dist/out && sha256sum ./*.tar.gz > SHA256SUMS && cat SHA256SUMS
+
+      - name: Extract release notes from CHANGELOG
+        run: |
+          # The section for this version, up to the next "## " heading — or the
+          # trailing link-reference definitions, which are markdown plumbing and
+          # do not belong in release notes.
+          awk -v ver="## [$VERSION]" '
+            index($0, ver) == 1 { found = 1; next }
+            found && /^## / { exit }
+            found && /^\[[^]]+\]: / { exit }
+            found { print }
+          ' CHANGELOG.md > dist/notes.md
+          if [ ! -s dist/notes.md ]; then
+            echo "::error::no release notes found for $VERSION in CHANGELOG.md"
+            exit 1
+          fi
+          cat dist/notes.md
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ env.VERSION }}
+          body_path: dist/notes.md
+          prerelease: ${{ needs.meta.outputs.prerelease == 'true' }}
+          files: |
+            dist/out/*.tar.gz
+            dist/out/SHA256SUMS

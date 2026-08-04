@@ -2,6 +2,24 @@
   "name": "@six5536/symify-darwin-arm64",
   "version": "0.1.0",
   "description": "Prebuilt symify binary for darwin-arm64.",
+  "homepage": "https://github.com/six5536/symify#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/six5536/symify.git",
+    "directory": "packages/symify-darwin-arm64"
+  },
+  "bugs": {
+    "url": "https://github.com/six5536/symify/issues"
+  },
+  "author": "six5536 <10079653+six5536@users.noreply.github.com>",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "dotfiles",
+    "symlink",
+    "sync"
+  ],
   "os": [
     "darwin"
   ],

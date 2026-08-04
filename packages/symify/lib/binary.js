@@ -51,4 +51,29 @@ function resolveBinary(platform, arch, requireResolve = require.resolve) {
   }
 }
 
-module.exports = { selectPackage, binaryName, resolveBinary, PACKAGES, SUPPORTED };
+/**
+ * Map a `spawnSync` result to the exit code this process should use.
+ *
+ * A child killed by a signal reports `status === null` and `signal === "SIGINT"`
+ * etc. Shells encode that as `128 + signum`, so a Ctrl-C'd run exits 130 rather
+ * than a misleading 1. `signals` is injected for testability and defaults to
+ * Node's own table.
+ */
+function exitCode(result, signals = require("node:os").constants.signals) {
+  if (result.signal) {
+    const signum = signals[result.signal];
+    if (signum) {
+      return 128 + signum;
+    }
+  }
+  return result.status === null ? 1 : result.status;
+}
+
+module.exports = {
+  selectPackage,
+  binaryName,
+  resolveBinary,
+  exitCode,
+  PACKAGES,
+  SUPPORTED,
+};

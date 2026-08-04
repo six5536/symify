@@ -6,6 +6,7 @@
 // Usage: node scripts/set-version.mjs <version>
 
 import { readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -48,4 +49,20 @@ for (const name of readdirSync(pkgsDir)) {
   writeFileSync(p, JSON.stringify(json, null, 2) + "\n");
 }
 
-console.log(`set version to ${version} across Cargo workspace and packages/`);
+// Lockfiles record the workspace members' own versions, so they go stale on a
+// bump. Left stale, `cargo publish --locked` fails and `npm ci` refuses to
+// install. Refresh both rather than leave that for the release to discover.
+const run = (cmd, args) => {
+  try {
+    execFileSync(cmd, args, { cwd: root, stdio: "inherit" });
+  } catch {
+    console.error(`\nfailed: ${cmd} ${args.join(" ")}`);
+    console.error("The manifests were updated but the lockfiles are now stale.");
+    process.exit(1);
+  }
+};
+
+run("cargo", ["update", "--workspace", "--offline"]);
+run("npm", ["install", "--package-lock-only", "--ignore-scripts", "--silent"]);
+
+console.log(`set version to ${version} across Cargo workspace, packages/, and both lockfiles`);

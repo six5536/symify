@@ -1,0 +1,128 @@
+name: Checks
+
+# The single source of truth for "is this tree good?". Called by ci.yml on every
+# push/PR and by release.yml before it publishes anything, so the release gate
+# cannot drift from CI.
+on:
+  workflow_call:
+
+# sccache (configured in .cargo/config.toml) is bypassed in CI; we use
+# Swatinem/rust-cache for caching instead.
+env:
+  CARGO_BUILD_RUSTC_WRAPPER: ""
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # ubuntu is covered by the `coverage` job below (it runs the full suite while
+    # measuring), so the plain matrix only needs the cross-platform macos check.
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo nextest run --workspace --locked
+
+      - name: Doctests
+        run: cargo test --doc --workspace --locked
+
+      - name: Docs (warnings as errors)
+        run: cargo doc --workspace --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      - name: Launcher test
+        run: node --test packages/symify/test/*.test.js
+
+      - name: Version consistency
+        run: node scripts/verify-version.mjs
+
+  coverage:
+    # Runs the full test suite on ubuntu under instrumentation and enforces the
+    # per-crate line-coverage gate. Uses nightly so the `coverage(off)` markers on
+    # untestable glue take effect (stable ignores them).
+    name: coverage (ubuntu, nightly)
+    runs-on: ubuntu-latest
+    env:
+      CARGO_BUILD_RUSTC_WRAPPER: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install cargo-llvm-cov and cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov,cargo-nextest
+
+      - name: Coverage gate (per-crate line >= 90%)
+        run: npm run coverage:check
+
+  schema:
+    name: schema codegen drift
+    runs-on: ubuntu-latest
+    env:
+      CARGO_BUILD_RUSTC_WRAPPER: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: Swatinem/rust-cache@v2
+      # Prebuilt where available, rather than `cargo install` building it from
+      # source on every run. The version matches the pin in .mise.toml.
+      - name: Install cargo-typify
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-typify@0.6.2
+      - name: Regenerate model and check for drift
+        run: npm run codegen:check
+
+  deny:
+    # Deterministic supply-chain checks only: these fail when *we* change
+    # dependencies. Advisories are handled by audit.yml on a schedule so a new
+    # RUSTSEC entry can never block an unrelated PR or an in-flight release.
+    name: cargo-deny (licenses, bans, sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses bans sources
