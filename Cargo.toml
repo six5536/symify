@@ -8,7 +8,7 @@ members = [
 default-members = ["crates/app/symify", "crates/lib/symify-core"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.0-rc.1"
 authors = ["six5536 <10079653+six5536@users.noreply.github.com>"]
 edition = "2024"
 rust-version = "1.96.0"
@@ -38,7 +38,7 @@ insta = "1.47"
 tempfile = "3.27"
 
 # Internal crates
-symify-core = { path = "crates/lib/symify-core", version = "0.1.0" }
+symify-core = { path = "crates/lib/symify-core", version = "0.1.0-rc.1" }
 
 # Optimize release builds for size
 [profile.release]
