@@ -106,7 +106,7 @@ partial-apply/drift rule.
 
 The "same content" relink case applies when the live file already matches the
 store (e.g. re-running after a manual edit that happened to converge): there is
-no data to preserve, so `S` is simply replaced by a link with no backup.
+no data to preserve, so `S` is replaced by a link with no backup.
 
 ### `deploy` (store → live)
 
@@ -127,8 +127,8 @@ The `conflict` setting selects the policy for that overwrite:
 - `skip` — leave the existing file, report the conflict (counts as drift /
   non-success).
 - `replace` — delete the existing file, then write.
-- `backup` (recommended default behavior for safety) — rename to
-  `<name>.<timestamp>.bak`, then write. Timestamp format `YYYYMMDDHHMMSS`.
+- `backup` (the default, and the safest) — rename to `<name>.<timestamp>.bak`,
+  then write. Timestamp format `YYYYMMDDHHMMSS`.
 
 Once a `symlink` entry is established, `S` is a link with no
 independent content, so `sync` is a no-op for it (edits flow through to `D`).
@@ -470,7 +470,7 @@ The schema models `links` and `mappings` as objects with `additionalProperties`
 > `@typespec/json-schema` emitter produces a `$id`-per-type bundle using
 > `unevaluatedProperties` and nested per-subschema `$defs` that `typify` cannot
 > ingest. `typify` works cleanly on a hand-authored schema, so TypeSpec was
-> dropped in favor of authoring the JSON Schema directly.
+> dropped in favour of authoring the JSON Schema directly.
 
 ## Packaging & distribution
 
@@ -498,9 +498,9 @@ packages/
 - **Version lockstep**: launcher + all platform packages share one version and
   publish atomically.
 - **Unsupported platform** (no matching optional dep — e.g. Windows in v1, or a
-  32-bit or non-x86/ARM architecture): fail with a clear, actionable message
-  listing supported platforms and pointing to `cargo install symify`. **No**
-  auto-download / build-from-source fallback in v1. Note the Linux packages are
+  32-bit or non-x86/ARM architecture): fail with a message that lists the
+  supported platforms and points at `cargo install symify`. **No** auto-download
+  / build-from-source fallback in v1. Note the Linux packages are
   static musl builds, so they cover glibc and musl hosts alike — libc is not a
   dimension of this matrix.
 
@@ -592,7 +592,7 @@ under `cargo-nextest` (`npm test`).
 ### CI platforms
 
 Tests run on **Linux and macOS** (the v1 ship targets). Windows-specific
-behavior (symlink privilege, path handling) is gated until Windows is shipped.
+behaviour (symlink privilege, path handling) is gated until Windows is shipped.
 
 ## Recommended dependencies
 

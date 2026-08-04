@@ -369,7 +369,7 @@ pub fn expand_path(raw: &str, home: Option<&Path>) -> Result<PathBuf> {
 }
 
 /// Expand `$VAR` and `${VAR}` using the process environment. Unknown variables
-/// expand to empty (matching common shell behavior).
+/// expand to empty (matching common shell behaviour).
 fn expand_env(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let bytes = s.as_bytes();

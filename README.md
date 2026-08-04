@@ -41,8 +41,9 @@ building from source there is at your own risk.
 
 ## Quickstart
 
-For the common dotfiles use case, simply add your first file, and symify creates its config file on first use at
- `~/.config/symify/symify.toml`, with the defaults `live = ~`, `store = ~/dotfiles`:
+Add your first file. symify writes its config on first use to
+`~/.config/symify/symify.toml`, defaulting to `live = ~` and
+`store = ~/dotfiles`:
 
 ```sh
 symify add ~/.zshrc      # move it into ~/dotfiles and replace it with a link
@@ -166,10 +167,10 @@ To report a security issue, see [SECURITY.md](SECURITY.md).
 
 ## Backups & History
 
-Your store is just a directory, so history comes for free: keep it under **git**
-and commit after each `sync`, and `git log` gives you full, deduplicated,
-pushable history. If your store isn't a git repository, point a backup tool such
-as [restic](https://restic.net/) or [borg](https://www.borgbackup.org/) at it.
+Your store is just a directory, so history comes for free. Keep it under **git**,
+commit after each `sync`, and `git log` is your history. If your store isn't a
+git repository, point a backup tool such as [restic](https://restic.net/) or
+[borg](https://www.borgbackup.org/) at it.
 
 symify focuses on keeping your two locations in sync and leaves long-term
 archiving to those purpose-built tools. Its own safety net is the

@@ -9,4 +9,4 @@
 - [ ] `cargo nextest run --workspace` passes
 - [ ] `cargo test --doc --workspace` passes
 - [ ] `npm run codegen:check` passes (if the schema changed)
-- [ ] Docs updated (README / specs / rustdoc) where behavior changed
+- [ ] Docs updated (README / specs / rustdoc) where behaviour changed

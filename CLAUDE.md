@@ -9,7 +9,7 @@
 
 # Contributing
 
-- See /CONTRIBUTING.md for setup, the test layers, and how a release is cut.
+- See /CONTRIBUTING.md for setup, the test layers, and the release procedure.
 
 # Releasing
 
