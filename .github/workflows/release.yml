@@ -86,9 +86,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@1.96.0
-        with:
-          targets: ${{ matrix.target }}
+      # Version comes from rust-toolchain.toml; only the cross target is added
+      # here, since that is per-matrix-entry and not a property of the toolchain.
+      - name: Install the pinned toolchain and cross target
+        run: |
+          rustup toolchain install --profile minimal
+          rustup target add ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
 
@@ -153,7 +156,8 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      - uses: dtolnay/rust-toolchain@1.96.0
+      - name: Install the pinned toolchain
+        run: rustup toolchain install --profile minimal
 
       - name: Download platform binaries
         uses: actions/download-artifact@v4
@@ -223,7 +227,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@1.96.0
+      - name: Install the pinned toolchain
+        run: rustup toolchain install --profile minimal
 
       - name: Download platform binaries
         uses: actions/download-artifact@v4

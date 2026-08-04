@@ -28,10 +28,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.96.0
-        with:
-          components: rustfmt, clippy
+      # No toolchain action: rust-toolchain.toml is the single source of truth
+      # for the version *and* the components, and rustup honours it over
+      # `rustup default`. Pinning a version in the workflow too would be a second
+      # copy that cannot affect the build but can drift — which is exactly how a
+      # Dependabot bump to a nonexistent Rust 1.100.0 broke CI.
+      - name: Install the pinned toolchain
+        run: rustup toolchain install --profile minimal
 
       - uses: Swatinem/rust-cache@v2
 
@@ -78,10 +81,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Nightly genuinely is not in rust-toolchain.toml — it exists only so the
+      # `coverage(off)` markers take effect. Installed explicitly; the npm script
+      # selects it with `cargo +nightly`.
       - name: Install nightly toolchain
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: llvm-tools-preview
+        run: rustup toolchain install nightly --profile minimal --component llvm-tools-preview
 
       - uses: Swatinem/rust-cache@v2
 
@@ -104,14 +108,26 @@ jobs:
       CARGO_BUILD_RUSTC_WRAPPER: ""
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.96.0
+      - name: Install the pinned toolchain
+        run: rustup toolchain install --profile minimal
       - uses: Swatinem/rust-cache@v2
       # Prebuilt where available, rather than `cargo install` building it from
-      # source on every run. The version matches the pin in .mise.toml.
+      # source on every run. The version is read from .mise.toml so there is one
+      # place to bump it, not two.
+      - name: Read the pinned cargo-typify version
+        id: typify
+        run: |
+          version="$(grep -oE '"cargo:cargo-typify" = "[^"]+"' .mise.toml | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+          if [ -z "$version" ]; then
+            echo "::error::could not read cargo:cargo-typify version from .mise.toml"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "cargo-typify $version"
       - name: Install cargo-typify
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-typify@0.6.2
+          tool: cargo-typify@${{ steps.typify.outputs.version }}
       - name: Regenerate model and check for drift
         run: npm run codegen:check
 

@@ -25,6 +25,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # No ignore rule is needed for dtolnay/rust-toolchain: the workflows no
+    # longer reference it. Its tags are Rust toolchain names rather than action
+    # releases, so Dependabot read `@1.96.0` as semver and bumped it to a
+    # nonexistent Rust 1.100.0. The version now lives only in rust-toolchain.toml.
     groups:
       actions:
         patterns: ["*"]
