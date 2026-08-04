@@ -30,7 +30,7 @@ jobs:
       prerelease: ${{ steps.v.outputs.prerelease }}
       npm_tag: ${{ steps.v.outputs.npm_tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Derive version from tag
         id: v
@@ -84,7 +84,7 @@ jobs:
           - { os: macos-latest, target: aarch64-apple-darwin, pkg: darwin-arm64, builder: cargo }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Version comes from rust-toolchain.toml; only the cross target is added
       # here, since that is per-matrix-entry and not a property of the toolchain.
@@ -97,13 +97,13 @@ jobs:
 
       - name: Install cargo-zigbuild
         if: matrix.builder == 'zigbuild'
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.85.6
         with:
           tool: cargo-zigbuild
 
       - name: Install zig
         if: matrix.builder == 'zigbuild'
-        uses: mlugg/setup-zig@v1
+        uses: mlugg/setup-zig@v2
 
       - name: Build (zigbuild)
         if: matrix.builder == 'zigbuild'
@@ -129,7 +129,7 @@ jobs:
           fi
           echo "$bin is static"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: symify-${{ matrix.pkg }}
           path: packages/symify-${{ matrix.pkg }}/bin/symify
@@ -149,9 +149,9 @@ jobs:
       VERSION: ${{ needs.meta.outputs.version }}
       NPM_TAG: ${{ needs.meta.outputs.npm_tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
@@ -160,7 +160,7 @@ jobs:
         run: rustup toolchain install --profile minimal
 
       - name: Download platform binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -225,13 +225,13 @@ jobs:
     env:
       VERSION: ${{ needs.meta.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install the pinned toolchain
         run: rustup toolchain install --profile minimal
 
       - name: Download platform binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -275,7 +275,7 @@ jobs:
           cat dist/notes.md
 
       - name: Create the release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: v${{ env.VERSION }}
           body_path: dist/notes.md
