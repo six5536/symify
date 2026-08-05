@@ -8,21 +8,21 @@
 # Design
 
 * [Architecture](architecture.md) - locations, verbs × modes, the pure-planner pipeline, the per-entry state machine, and link resolution.
-* [Architectural Rules](architectural-rules.md) - invariants that changes must preserve and the safety guards.
-* [Software Components](software-components.md) - the Rust crates and their modules, the npm packages, the platform matrix, and the CI/CD workflows.
-* [Configuration & Environments](configuration.md) - config file structure, discovery and merge order, and the schema codegen.
-* [API Contracts](api-contracts.md) - the CLI surface and flags, status labels, JSON output, and the stability promises.
-* [Error Handling & Logging](error-handling.md) - exit codes, continue-on-error execution, and the broken-pipe rule.
+* [Architectural Rules](architectural-rules.md) - invariants that changes must preserve — planner purity, statelessness, never discovering files, additive copies — and the safety guards.
+* [Software Components](software-components.md) - the Rust crates and their modules, the npm launcher and platform packages, the platform matrix, and the CI/CD workflows.
+* [Configuration & Environments](configuration.md) - config file structure, discovery and merge order, and the JSON Schema that generates the Rust model and drives editor validation.
+* [API Contracts](api-contracts.md) - the CLI surface and flags, config-mutation and auto-init behaviour, status labels, JSON output, and the stability promises.
+* [Error Handling & Logging](error-handling.md) - exit codes, continue-on-error execution, per-entry outcome reporting, and the broken-pipe rule.
 * [Directory Structure](directory-structure.md) - what lives where in the repository.
-* [Technology Stack](technology-stack.md) - languages, dependencies, and the pinned toolchain set.
+* [Technology Stack](technology-stack.md) - languages, runtime and dev dependencies, and the pinned toolchain set.
 
 # Process
 
 * [Coding Standards](coding-standards.md) - prose rules, Rust and TypeScript conventions, and the code-is-canonical principle.
-* [Security Requirements](security-requirements.md) - the vulnerability policy in brief, and why the safety model is the security surface.
+* [Security Requirements](security-requirements.md) - the vulnerability policy in brief, and why the safety model counts as the security surface.
 * [Dependency Policy](dependency-policy.md) - when a dependency may be added and how its version is chosen.
-* [Testing Strategy](testing-strategy.md) - the test layers, the key choices behind them, and the CI platforms.
+* [Testing Strategy](testing-strategy.md) - the test layers from planner units to CLI end-to-end, the key choices behind them, and the CI platforms.
 * [Development Procedure](development-procedure.md) - setup, the plan-driven change workflow, and what to run before a PR.
 * [Development Commands](development-commands.md) - the npm-script command set and the pre-PR check list's shape.
 * [Definition of Done](definition-of-done.md) - what a change must satisfy before it merges.
-* [Release Procedure](release-procedure.md) - the changelog gate, the release command, the irreversible push, and the pipeline.
+* [Release Procedure](release-procedure.md) - the changelog gate, the release command, the irreversible push, and the tag-driven pipeline.
