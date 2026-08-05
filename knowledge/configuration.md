@@ -2,7 +2,7 @@
 type: Reference
 id: configuration
 title: Configuration & Environments
-description: Config file structure, discovery and merge order, and the JSON Schema that generates the Rust model and drives editor validation.
+description: Config file structure, discovery and merge order, os/host machine conditions, backup retention, and the JSON Schema that generates the Rust model and drives editor validation.
 status: stable
 sources:
   - id: config-src
@@ -25,6 +25,7 @@ live = "~"            # working location (links/copies appear here)
 store = "~/dotfiles"  # backing repository (real content lives here)
 mode = "symlink"      # symlink | copy
 conflict = "backup"   # skip | replace | backup
+# backup_keep = 5     # cap on .bak files per path; absent/0 = keep all
 
 [mappings.dotfiles]
 # optional per-mapping overrides of live / store / mode / conflict,
@@ -35,9 +36,16 @@ conflict = "backup"   # skip | replace | backup
 ```
 
 `[settings]` provides defaults; each `[mappings.<name>]` may override `live`,
-`store`, `mode`, and `conflict`. Paths support `~` and environment-variable
-expansion (Windows-aware) and are normalised to absolute paths before
-planning.
+`store`, `mode`, `conflict`, and `backup_keep`. Paths support `~` and
+environment-variable expansion (Windows-aware) and are normalised to absolute
+paths before planning.
+
+`backup_keep = N` bounds the `<name>.<timestamp>.bak` files: when a new
+backup is written, the oldest beyond `N` (the new one included) are planned
+as removes — visible in `--dry-run`, and gated by the delete confirmation
+when a backup is a non-empty directory. Opt-in: absent or `0` keeps every
+backup. Only exact-pattern siblings of the entry's own leaf are touched — the
+carve-out recorded in [architectural-rules](architectural-rules.md).
 
 # Machine conditions (`os` / `host`)
 

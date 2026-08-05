@@ -284,7 +284,70 @@ fn plan_entry(
         Verb::Sync => plan_sync(&s, &d, m, opts)?,
         Verb::Deploy => plan_deploy(&s, &d, m, opts)?,
     };
+    let action = apply_retention(action, m.backup_keep)?;
     Ok(make(s, d, action))
+}
+
+/// Enforce `backup_keep` on an action's `Backup` ops: for each fresh backup,
+/// plan `Remove`s for the oldest existing `<name>.<timestamp>.bak` siblings
+/// beyond `keep - 1` (the new backup makes `keep`). `keep == 0` = unlimited.
+/// The removes run last, after the content-preserving ops.
+fn apply_retention(action: Action, keep: u64) -> Result<Action> {
+    if keep == 0 {
+        return Ok(action);
+    }
+    let (kind, mut ops, drift) = match action {
+        Action::Apply { kind, ops } => (kind, ops, false),
+        Action::ApplyDrift { kind, ops } => (kind, ops, true),
+        other => return Ok(other),
+    };
+    let mut removes = Vec::new();
+    for op in &ops {
+        if let FsOp::Backup(target) = op {
+            removes.extend(stale_backups(target, keep)?.into_iter().map(FsOp::Remove));
+        }
+    }
+    ops.extend(removes);
+    Ok(if drift {
+        Action::ApplyDrift { kind, ops }
+    } else {
+        Action::Apply { kind, ops }
+    })
+}
+
+/// The oldest existing backups of `target` beyond `keep - 1`. Matches exactly
+/// `<leaf>.<14 ASCII digits>.bak` beside `target` — the one, narrow exception
+/// to "symify never discovers files" (see `knowledge/architectural-rules.md`):
+/// anchored to the entry's own leaf and symify's own artifact pattern, it can
+/// never match user files, other entries, or hand-renamed backups.
+fn stale_backups(target: &Path, keep: u64) -> Result<Vec<PathBuf>> {
+    let (Some(parent), Some(leaf)) = (target.parent(), target.file_name()) else {
+        return Ok(Vec::new());
+    };
+    let prefix = format!("{}.", leaf.to_string_lossy());
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return Ok(Vec::new()); // no parent directory yet — nothing to prune
+    };
+    let mut names: Vec<String> = Vec::new();
+    for entry in entries {
+        let Ok(entry) = entry else { continue };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let stamp = name
+            .strip_prefix(&prefix)
+            .and_then(|rest| rest.strip_suffix(".bak"));
+        if stamp.is_some_and(|s| s.len() == 14 && s.bytes().all(|b| b.is_ascii_digit())) {
+            names.push(name);
+        }
+    }
+    // Lexicographic order of `YYYYMMDDHHMMSS` stamps is chronological.
+    names.sort();
+    let allowed = (keep as usize).saturating_sub(1);
+    let excess = names.len().saturating_sub(allowed);
+    Ok(names
+        .into_iter()
+        .take(excess)
+        .map(|n| parent.join(n))
+        .collect())
 }
 
 /// Safety check shared by [`plan`] and `status`. Returns a refusal reason when an
@@ -694,6 +757,7 @@ mod tests {
                     conflict,
                     links: links.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
                     inactive: None,
+                    backup_keep: 0,
                 }],
             }
         }
@@ -1292,6 +1356,7 @@ mod tests {
                 conflict: Conflict::Backup,
                 links: vec![("sub".to_string(), t())],
                 inactive: None,
+                backup_keep: 0,
             }],
         };
         assert!(matches!(act(&cfg, Verb::Sync), Action::Failed(_)));

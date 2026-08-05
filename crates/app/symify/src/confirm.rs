@@ -1,10 +1,11 @@
 //! Confirmation gate for unrecoverable actions.
 //!
 //! The only unrecoverable filesystem op symify emits is a recursive delete of a
-//! non-empty directory, produced by `conflict = replace`. Before executing a
-//! plan that contains one, we require confirmation: an interactive `[y/N]` prompt
-//! on a TTY, or `--yes`. Non-interactive runs (piped, `--json`, CI) are refused
-//! unless `--yes` is given, so a script can never silently trigger a recursive
+//! non-empty directory, produced by `conflict = replace` or by a `backup_keep`
+//! prune of a stale directory backup. Before executing a plan that contains
+//! one, we require confirmation: an interactive `[y/N]` prompt on a TTY, or
+//! `--yes`. Non-interactive runs (piped, `--json`, CI) are refused unless
+//! `--yes` is given, so a script can never silently trigger a recursive
 //! delete. Everything else (links, single-file adopts, backups) proceeds freely.
 
 use std::io::{BufRead, IsTerminal, Write};
@@ -98,11 +99,18 @@ fn decide<R: BufRead, W: Write>(
         return Ok(Gate::Proceed);
     }
 
-    // Destructive and not pre-approved: a TTY can confirm; anything else refuses.
+    // Destructive and not pre-approved: a TTY can confirm; anything else
+    // refuses. Name the paths — a cron log must show what needed confirming.
     if json || !interactive {
-        return Err(Error::config(
-            "refusing to recursively delete a directory without confirmation; re-run with --yes",
-        ));
+        let list: Vec<String> = deletes
+            .iter()
+            .map(|d| format!("{} ({}/{})", d.path.display(), d.mapping, d.key))
+            .collect();
+        return Err(Error::config(format!(
+            "refusing to recursively delete a directory without confirmation; \
+             re-run with --yes. Pending: {}",
+            list.join(", ")
+        )));
     }
 
     let w = |e: std::io::Error| Error::io(Path::new("<stderr>"), e);

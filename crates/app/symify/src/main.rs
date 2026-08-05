@@ -630,6 +630,7 @@ mod tests {
             conflict: Conflict::Backup,
             links: vec![],
             inactive: None,
+            backup_keep: 0,
         }
     }
 

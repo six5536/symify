@@ -13,6 +13,14 @@ publish a version it cannot find a heading for.
 
 ### Added
 
+- `backup_keep = N` (settings or per mapping): when a new
+  `<name>.<timestamp>.bak` backup is written, the oldest beyond `N` are
+  deleted (the new backup counts). Opt-in — absent or `0` keeps every backup,
+  as before. Prunes are visible in `--dry-run` and only ever match symify's
+  own exact backup pattern for that path. Pruning a non-empty *directory*
+  backup goes through the usual delete confirmation, so scripted runs need
+  `--yes` for that case; they also count toward the `removed` total in
+  output.
 - `symify diff`: a read-only verb showing what `status` only labels — unified
   content diffs per changed file (store side as `-`, live as `+`), `only in
   live/store:` lines for one-sided files, and one-line summaries for binary,

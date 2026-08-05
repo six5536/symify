@@ -10,7 +10,7 @@
 * [Architecture](architecture.md) - locations, verbs × modes, the pure-planner pipeline, the per-entry state machine, and link resolution.
 * [Architectural Rules](architectural-rules.md) - invariants that changes must preserve — planner purity, statelessness, never discovering files, additive copies — and the safety guards.
 * [Software Components](software-components.md) - the Rust crates and their modules, the npm launcher and platform packages, the platform matrix, and the CI/CD workflows.
-* [Configuration & Environments](configuration.md) - config file structure, discovery and merge order, and the JSON Schema that generates the Rust model and drives editor validation.
+* [Configuration & Environments](configuration.md) - config file structure, discovery and merge order, os/host machine conditions, backup retention, and the JSON Schema that generates the Rust model and drives editor validation.
 * [API Contracts](api-contracts.md) - the CLI surface and flags, config-mutation and auto-init behaviour, status labels, JSON output, and the stability promises.
 * [Error Handling & Logging](error-handling.md) - exit codes, continue-on-error execution, per-entry outcome reporting, and the broken-pipe rule.
 * [Directory Structure](directory-structure.md) - what lives where in the repository.

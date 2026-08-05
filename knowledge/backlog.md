@@ -16,8 +16,7 @@ links:
 
 # Open
 
-- **Bounded `.bak` retention.** `.bak` files accumulate without bound on
-  repeated conflicts; a small retention setting could cap them.
+(Nothing at present.)
 
 # Decided against
 
@@ -31,6 +30,13 @@ links:
 
 # Done (kept for the reasoning)
 
+- **Bounded `.bak` retention** (PLAN-011, 2026-08): the `backup_keep = N`
+  setting, applied only when a new backup is written. A setting rather than a
+  `clean-backups` verb (a verb is manual — the mess returns), opt-in
+  (absent/`0` keeps all: no upgrade silently deletes a recovery path), and
+  per-path rather than global. Needed a signed-off carve-out to "never
+  discovers files" — see
+  [architectural-rules](architectural-rules.md).
 - **Man page + shell completions** (PLAN-006): shipped as a runtime
   `symify completions <shell>` verb because that is the only form that
   reaches npm and `cargo install` users — release archives reach neither.

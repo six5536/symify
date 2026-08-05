@@ -27,10 +27,16 @@ Rules that hold across the codebase, in force wherever the mechanisms of
   every run derives everything from config + FS.
 - **symify never discovers files.** The planner touches only the exact keys
   written in config — no glob, no directory walk, no "track everything under
-  `live`".
+  `live`". One narrow, signed-off carve-out (2026-08-05): when writing a new
+  backup with `backup_keep` set, the planner reads the target's parent
+  directory for names matching exactly `<leaf>.<14-digit-timestamp>.bak` of
+  the entry's own leaf, to prune the oldest beyond the cap. The pattern can
+  never match user files, other entries' backups, or hand-renamed backups,
+  and the prune runs only while a new backup is being written.
 - **Copies are additive.** Destination-only files are never deleted; the only
-  delete symify emits is governed by the `conflict = replace` policy on a
-  listed entry.
+  deletes symify emits are governed by the `conflict = replace` policy on a
+  listed entry, or by a `backup_keep` prune of the entry's own stale backups
+  (the carve-out above).
 - **Backups protect the side being overwritten**, whichever verb runs.
 - **Continue on error, no rollback.** Entries are independent; backups are the
   recovery path.
@@ -68,7 +74,8 @@ Windows is a no-op pending a future milestone.)
 
 **Confirmation for unrecoverable deletes.** The only unrecoverable op symify
 emits is a recursive delete of a non-empty directory, produced by
-`conflict = replace`. Before executing such a plan it requires confirmation:
+`conflict = replace` or by a `backup_keep` prune of a stale directory backup.
+Before executing such a plan it requires confirmation:
 an interactive `[y/N]` prompt (default No) on a TTY, or `--yes`.
 Non-interactive runs (piped, `--json`, CI) are *refused* unless `--yes` is
 given, so a script can never silently trigger one. `--dry-run` never prompts

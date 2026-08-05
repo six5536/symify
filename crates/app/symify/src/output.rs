@@ -1177,6 +1177,7 @@ mod tests {
                     (".vimrc".into(), LinkValue::String("vim/vimrc".into())),
                 ],
                 inactive: None,
+                backup_keep: 0,
             }],
         }
     }

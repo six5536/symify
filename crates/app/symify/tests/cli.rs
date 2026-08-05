@@ -841,3 +841,88 @@ fn diff_is_not_captured_by_the_bare_path_shortcut() {
     fx.cmd("diff").assert().success();
 }
 
+// ----- backup_keep retention ---------------------------------------------
+
+#[test]
+fn backup_keep_prunes_only_after_dry_run_preview() {
+    let fx = Fx::with_body(
+        "backup_keep = 1\n\n[mappings.dotfiles.links]\n\"x\" = true\n",
+        "backup",
+    );
+    fx.write(&fx.lp("x"), b"live");
+    fx.write(&fx.sp("x"), b"store");
+    fx.write(&fx.sp("x.20200101000000.bak"), b"ancient");
+
+    // Dry run: the prune is visible (removed count) but nothing changes.
+    let out = fx
+        .cmd("sync")
+        .args(["--dry-run", "--json"])
+        .assert()
+        .success();
+    let doc: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert_eq!(doc["entries"][0]["removed"], 1, "got: {doc}");
+    assert!(fx.sp("x.20200101000000.bak").exists());
+
+    // Real run: keep = 1 means only the fresh backup survives.
+    fx.cmd("sync").assert().success();
+    assert!(!fx.sp("x.20200101000000.bak").exists());
+    let baks: Vec<_> = std::fs::read_dir(&fx.store)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".bak"))
+        .collect();
+    assert_eq!(baks.len(), 1, "exactly the fresh backup: {baks:?}");
+}
+
+#[test]
+fn backup_keep_dir_prune_is_gated_like_any_recursive_delete() {
+    // The stale backup is a non-empty directory, so pruning it is an
+    // unrecoverable recursive delete: refused when non-interactive without
+    // --yes, applied with it.
+    let fx = Fx::with_body(
+        "backup_keep = 1\n\n[mappings.dotfiles.links]\n\"d\" = true\n",
+        "backup",
+    );
+    fx.write(&fx.lp("d/f.txt"), b"live");
+    fx.write(&fx.sp("d/f.txt"), b"store");
+    fx.write(&fx.sp("d.20200101000000.bak/old.txt"), b"ancient");
+
+    let out = fx.cmd("sync").assert().code(2); // piped stdin => non-interactive
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("refusing to recursively delete"),
+        "got: {stderr}"
+    );
+    assert!(
+        fx.sp("d.20200101000000.bak/old.txt").exists(),
+        "refused run must not prune"
+    );
+
+    fx.cmd("sync").arg("--yes").assert().success();
+    assert!(
+        !fx.sp("d.20200101000000.bak").exists(),
+        "pruned under --yes"
+    );
+}
+
+#[test]
+fn gate_refusal_names_the_pending_delete() {
+    // The non-interactive refusal must say WHICH path needed confirming, so a
+    // cron log is actionable.
+    let fx = Fx::with_body(
+        "backup_keep = 1\n\n[mappings.dotfiles.links]\n\"d\" = true\n",
+        "backup",
+    );
+    fx.write(&fx.lp("d/f.txt"), b"live");
+    fx.write(&fx.sp("d/f.txt"), b"store");
+    fx.write(&fx.sp("d.20200101000000.bak/old.txt"), b"ancient");
+
+    let out = fx.cmd("sync").assert().code(2);
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("d.20200101000000.bak") && stderr.contains("dotfiles/d"),
+        "refusal must name the path and entry, got: {stderr}"
+    );
+}
+

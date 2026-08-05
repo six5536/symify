@@ -254,6 +254,11 @@ impl ::std::convert::From<::std::vec::Vec<::std::string::String>> for MachineMat
 #[doc = "  \"description\": \"A named group of links, with optional per-group overrides.\","]
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"properties\": {"]
+#[doc = "    \"backup_keep\": {"]
+#[doc = "      \"description\": \"Backup retention for this mapping (overrides settings.backup_keep). 0 = keep all.\","]
+#[doc = "      \"type\": \"integer\","]
+#[doc = "      \"minimum\": 0.0"]
+#[doc = "    },"]
 #[doc = "    \"conflict\": {"]
 #[doc = "      \"description\": \"Conflict policy for this mapping (overrides settings.conflict).\","]
 #[doc = "      \"$ref\": \"#/$defs/Conflict\""]
@@ -293,6 +298,9 @@ impl ::std::convert::From<::std::vec::Vec<::std::string::String>> for MachineMat
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Mapping {
+    #[doc = "Backup retention for this mapping (overrides settings.backup_keep). 0 = keep all."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub backup_keep: ::std::option::Option<u64>,
     #[doc = "Conflict policy for this mapping (overrides settings.conflict)."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub conflict: ::std::option::Option<Conflict>,
@@ -321,6 +329,7 @@ pub struct Mapping {
 impl ::std::default::Default for Mapping {
     fn default() -> Self {
         Self {
+            backup_keep: Default::default(),
             conflict: Default::default(),
             host: Default::default(),
             links: Default::default(),
@@ -423,6 +432,11 @@ impl ::std::convert::TryFrom<::std::string::String> for Mode {
 #[doc = "  \"description\": \"Defaults applied to every mapping; each mapping may override them.\","]
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"properties\": {"]
+#[doc = "    \"backup_keep\": {"]
+#[doc = "      \"description\": \"Keep at most this many `<name>.<timestamp>.bak` backups per path, deleting the oldest when a new backup is written. 0 or absent = keep all (default).\","]
+#[doc = "      \"type\": \"integer\","]
+#[doc = "      \"minimum\": 0.0"]
+#[doc = "    },"]
 #[doc = "    \"conflict\": {"]
 #[doc = "      \"description\": \"Default policy when the side being written already exists and differs.\","]
 #[doc = "      \"$ref\": \"#/$defs/Conflict\""]
@@ -447,6 +461,9 @@ impl ::std::convert::TryFrom<::std::string::String> for Mode {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
+    #[doc = "Keep at most this many `<name>.<timestamp>.bak` backups per path, deleting the oldest when a new backup is written. 0 or absent = keep all (default)."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub backup_keep: ::std::option::Option<u64>,
     #[doc = "Default policy when the side being written already exists and differs."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub conflict: ::std::option::Option<Conflict>,
@@ -463,6 +480,7 @@ pub struct Settings {
 impl ::std::default::Default for Settings {
     fn default() -> Self {
         Self {
+            backup_keep: Default::default(),
             conflict: Default::default(),
             live: Default::default(),
             mode: Default::default(),

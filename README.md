@@ -202,7 +202,13 @@ git repository, point a backup tool such as [restic](https://restic.net/) or
 symify focuses on keeping your two locations in sync and leaves long-term
 archiving to those purpose-built tools. Its own safety net is the
 `<name>.<timestamp>.bak` it writes before overwriting a file under
-`conflict = "backup"`.
+`conflict = "backup"`. Those backups accumulate on repeated conflicts; set
+`backup_keep = 5` (in `[settings]` or per mapping) to keep only the newest
+five per path — old ones are deleted when a new backup is written, and
+`--dry-run` shows the deletions. By default every backup is kept. Pruning a
+backup that is a non-empty *directory* counts as an unrecoverable delete, so
+it asks `[y/N]` first — scripted runs need `-y`/`--yes` for that case, like
+any other recursive delete.
 
 ## Development
 

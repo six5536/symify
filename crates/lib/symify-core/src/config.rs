@@ -80,6 +80,9 @@ pub struct ResolvedMapping {
     /// Set when the mapping's `os`/`host` condition did not match this machine.
     /// An inactive mapping is excluded from planning and status.
     pub inactive: Option<InactiveReason>,
+    /// Keep at most this many `.bak` backups per path when writing a new one;
+    /// `0` = keep all.
+    pub backup_keep: u64,
 }
 
 /// Decide which config files to load.
@@ -222,6 +225,7 @@ live = "{live}"          # where your files are used
 store = "{store}"        # where the real content is kept (commit this to git)
 mode = "symlink"         # symlink | copy (copy = independent copy, kept in sync)
 conflict = "backup"      # skip | replace (overwrite, no backup) | backup (.<timestamp>.bak)
+# backup_keep = 5        # keep at most N backups per path (absent/0 = keep all)
 
 # Each entry maps a path (relative to `live`) to how it lives in `store`:
 #   true / ""   mirror the key under `store`
@@ -276,6 +280,7 @@ fn merge_settings(base: Option<Settings>, overlay: Option<Settings>) -> Option<S
             store: o.store.or(b.store),
             mode: o.mode.or(b.mode),
             conflict: o.conflict.or(b.conflict),
+            backup_keep: o.backup_keep.or(b.backup_keep),
         }),
     }
 }
@@ -303,6 +308,7 @@ fn merge_mapping(base: Mapping, overlay: Mapping) -> Mapping {
         store: overlay.store.or(base.store),
         mode: overlay.mode.or(base.mode),
         conflict: overlay.conflict.or(base.conflict),
+        backup_keep: overlay.backup_keep.or(base.backup_keep),
         os: overlay.os.or(base.os),
         host: overlay.host.or(base.host),
         links,
@@ -342,6 +348,7 @@ pub fn resolve(config: Config, machine: &MachineContext) -> Result<ResolvedConfi
 
         let mode = m.mode.or(settings.mode).unwrap_or(DEFAULT_MODE);
         let conflict = m.conflict.or(settings.conflict).unwrap_or(DEFAULT_CONFLICT);
+        let backup_keep = m.backup_keep.or(settings.backup_keep).unwrap_or(0);
 
         let mut links: Vec<(String, LinkValue)> = m
             .links
@@ -369,6 +376,7 @@ pub fn resolve(config: Config, machine: &MachineContext) -> Result<ResolvedConfi
             conflict,
             links,
             inactive,
+            backup_keep,
         });
     }
 
@@ -898,6 +906,29 @@ mod tests {
         ] {
             assert_eq!(inactive_of(cond), want, "condition: {cond}");
         }
+    }
+
+    #[test]
+    fn backup_keep_resolves_with_mapping_override() {
+        let r = resolve_t(cfg(r#"[settings]
+            live = "/l"
+            store = "/s"
+            backup_keep = 3
+
+            [mappings.a]
+            [mappings.b]
+            backup_keep = 1"#))
+        .unwrap();
+        // Sorted by name: a inherits the settings value, b overrides it.
+        assert_eq!(r.mappings[0].backup_keep, 3);
+        assert_eq!(r.mappings[1].backup_keep, 1);
+
+        // Absent everywhere ⇒ 0 (unlimited).
+        let r = resolve_t(cfg(
+            "[settings]\nlive = \"/l\"\nstore = \"/s\"\n\n[mappings.m]",
+        ))
+        .unwrap();
+        assert_eq!(r.mappings[0].backup_keep, 0);
     }
 
     #[test]

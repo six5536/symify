@@ -178,6 +178,7 @@ mod tests {
                     conflict: Conflict::Backup,
                     links: links.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
                     inactive: None,
+                    backup_keep: 0,
                 }],
             }
         }
