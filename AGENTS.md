@@ -3,6 +3,11 @@
 Read the AOKF specification:
 @.agents/aokf/SPEC.md
 
+## Agent Rules
+
+@.agents/CODING.md
+@.agents/PROSE.md
+
 ## Canonical Project Knowledge
 
 All canonical project knowledge is stored in the AOKF bundle:
