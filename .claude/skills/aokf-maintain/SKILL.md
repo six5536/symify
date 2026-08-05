@@ -20,31 +20,35 @@ the next phase uses.
 
 # Phase 1 — deterministic checks
 
-Script these (a throwaway Python script in the job tmp dir is fine);
-don't eyeball them. Per SPEC §10, for every non-reserved `.md` file:
+Run the reference validator first:
 
-1. Frontmatter parses as YAML; `type` is present and non-empty.
-2. `id` values are valid slugs (lowercase, `-`-separated) and unique
-   across the bundle.
-3. No stamped fields present; `verified` entries, where present, have
-   `by` in `human:`/`process:` form and an ISO 8601 `at`.
-4. Every `links` entry has `rel` and `to`; `to` resolves to a concept
-   `id` or a repo path; each entry is mirrored by a plain markdown link
-   to the same target in the body.
-5. Body footnote labels each match a `sources[].id`; every source the
-   body cites has an `id`.
-6. `/`-rooted paths (in `resource`, `sources`, body links) and relative
-   body links point at files that exist.
-7. `knowledge/index.md` lists every concept, points at no missing file,
-   and each entry's text matches the concept's `description`.
-8. The core-concepts list in `AGENTS.md` references only files that
+```
+python3 .agents/aokf/tools/validator.py knowledge
+```
+
+It performs the SPEC §10 document check and grades the §11 conformance
+ladder: frontmatter and `type`, slug-valid unique `id`s, no stamped
+fields, well-formed `verified` entries, `links` entries with `rel` and a
+resolving `to` mirrored by a body link, existing `/`-rooted and relative
+paths, footnote labels matching `sources[].id`, and `index.md` entries
+pointing at real files. The bundle must PASS at level 2 with zero errors;
+treat warnings as work items too.
+
+Then script the checks the validator does not cover (a throwaway Python
+script in the job tmp dir is fine); don't eyeball them:
+
+1. `knowledge/index.md` lists every concept, and each entry's text
+   matches the concept's `description` (the index lowercases the first
+   word; ignore that difference).
+2. The core-concepts list in `AGENTS.md` references only files that
    exist.
-9. Flag lapsed verification: a `verified.at` older than the file's last
+3. Flag lapsed verification: a `verified.at` older than the file's last
    content change (`git log -1 --format=%cI -- <file>`) confers no
    trust. Report it; do not touch the field.
 
-Fix what the checks find. Broken links usually mean a rename the bundle
-missed — fix the reference, not the target.
+Fix what the checks find, then re-run the validator until it passes.
+Broken links usually mean a rename the bundle missed — fix the
+reference, not the target.
 
 # Phase 2 — accuracy against the code
 

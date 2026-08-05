@@ -7,6 +7,7 @@ Read the AOKF specification:
 
 @.agents/CODING.md
 @.agents/PROSE.md
+@.agents/VALIDATION.md
 
 ## Canonical Project Knowledge
 

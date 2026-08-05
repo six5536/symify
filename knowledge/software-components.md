@@ -115,8 +115,9 @@ by both `ci.yml` and `release.yml`, so the release gate cannot drift from CI.
 
 - **`checks.yml`**: `cargo fmt --check`, `clippy -D warnings`, `nextest`,
   doctests, `cargo doc -D warnings`, the npm launcher tests, version
-  consistency, the per-crate coverage gate, `codegen:check` (schema drift),
-  and `cargo-deny` for licences/bans/sources.
+  consistency, the AOKF knowledgebase validation (`check:aokf`), the
+  per-crate coverage gate, `codegen:check` (schema drift), and `cargo-deny`
+  for licences/bans/sources.
 - **`ci.yml`**: calls `checks.yml` on push and PR.
 - **`audit.yml`**: scheduled `cargo-deny check advisories`, opening an issue
   rather than failing builds — advisories are exogenous and must not block an

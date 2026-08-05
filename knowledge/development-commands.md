@@ -18,7 +18,10 @@ Everything is wrapped as npm scripts (defined in
 [CONTRIBUTING](/CONTRIBUTING.md)):
 
 - Dailies: `npm run build` / `test` / `lint` / `fmt` / `check` — thin wrappers
-  over cargo (`test` is `cargo nextest run --workspace`).
+  over cargo (`test` is `cargo nextest run --workspace` followed by
+  `check:aokf`).
+- Knowledgebase: `npm run check:aokf` validates the `knowledge/` AOKF bundle
+  with `.agents/aokf/tools/validator.py`.
 - Codegen: `npm run codegen` regenerates the Rust config model from the JSON
   Schema; `codegen:check` fails on drift.
 - Coverage: `npm run coverage` (HTML) / `coverage:summary` /

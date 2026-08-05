@@ -70,6 +70,9 @@ jobs:
       - name: Version consistency
         run: node scripts/verify-version.mjs
 
+      - name: Knowledgebase validation
+        run: npm run check:aokf
+
   coverage:
     # Runs the full test suite on ubuntu under instrumentation and enforces the
     # per-crate line-coverage gate. Uses nightly so the `coverage(off)` markers on
