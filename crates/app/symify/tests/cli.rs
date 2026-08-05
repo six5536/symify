@@ -445,7 +445,15 @@ fn man_is_hidden_from_help_but_completions_is_not() {
 /// `error: I/O error at <stdout>: Broken pipe` and exited 2.
 #[test]
 fn closed_stdout_exits_cleanly_and_quietly() {
-    let fx = Fx::new("backup", &[r#""a" = true"#, r#""b" = true"#]);
+    // Enough entries that status/list output exceeds the 64 KiB pipe buffer:
+    // the child then blocks writing until the parent closes the read end, so
+    // it deterministically sees EPIPE. With a two-line fixture the child could
+    // finish before the close and exit with its real (drift) code — a flake.
+    let links: Vec<String> = (0..3000)
+        .map(|i| format!("\"entry-number-{i:04}\" = true"))
+        .collect();
+    let link_refs: Vec<&str> = links.iter().map(String::as_str).collect();
+    let fx = Fx::new("backup", &link_refs);
     let bin = assert_cmd::cargo::cargo_bin("symify");
     let cfg = fx.config.to_string_lossy().into_owned();
 
