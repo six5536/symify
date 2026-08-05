@@ -15,7 +15,7 @@ sources:
     resource: /.github/workflows
     title: CI/CD workflows
 links:
-  - rel: has-part
+  - rel: references
     to: architecture
     note: The design these components implement.
 ---

@@ -35,7 +35,7 @@ conflict = "backup"   # skip | replace | backup
 
 `[settings]` provides defaults; each `[mappings.<name>]` may override `live`,
 `store`, `mode`, and `conflict`. Paths support `~` and environment-variable
-expansion (Windows-aware) and are normalized to absolute paths before
+expansion (Windows-aware) and are normalised to absolute paths before
 planning.
 
 # Loading and merge order
