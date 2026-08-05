@@ -18,7 +18,8 @@ use symify_core::clock::SystemClock;
 use symify_core::config::{MachineContext, ResolvedConfig, ResolvedMapping};
 use symify_core::model::{LinkValue, Mode};
 use symify_core::{
-    Action, Error, FsOp, RunOptions, Verb, config, edit, entry_paths, execute, fs, plan, status,
+    Action, Error, FsOp, RunOptions, StatusLabel, Verb, config, edit, entry_paths, execute, fs,
+    plan, status,
 };
 
 use crate::cli::{
@@ -66,6 +67,7 @@ fn run() -> symify_core::Result<u8> {
         Command::Sync(args) => run_verb(Verb::Sync, args),
         Command::Deploy(args) => run_verb(Verb::Deploy, args),
         Command::Status(args) => run_status(args),
+        Command::Diff(args) => run_diff(args),
         Command::Add(args) => run_add(args),
         Command::Remove(args) => run_remove(args),
         Command::List(args) => run_list(args),
@@ -230,6 +232,35 @@ fn run_status(args: QueryArgs) -> symify_core::Result<u8> {
     output::render_status(
         &mut io::stdout().lock(),
         &status(&cfg, opts)?,
+        &output::inactive_notes(&cfg),
+        args.json,
+    )
+    .map_err(stdout_err)
+}
+
+fn run_diff(args: QueryArgs) -> symify_core::Result<u8> {
+    let (_, resolved) = load_set(&args.config)?;
+    let cfg = config::select(resolved, &args.mapping)?;
+    let opts = RunOptions {
+        checksum: args.checksum,
+        modify_window: args.modify_window,
+    };
+    let entries = status(&cfg, opts)?;
+    // Per-file pairs only for the states that have content on both sides to
+    // compare; every other label renders from the entry itself.
+    let mut pairs = Vec::with_capacity(entries.len());
+    for e in &entries {
+        pairs.push(match e.label {
+            StatusLabel::Differs | StatusLabel::Unadopted => {
+                symify_core::diff_pairs(&e.live, &e.store, opts)?
+            }
+            _ => Vec::new(),
+        });
+    }
+    output::render_diff(
+        &mut io::stdout().lock(),
+        &entries,
+        &pairs,
         &output::inactive_notes(&cfg),
         args.json,
     )
@@ -552,6 +583,7 @@ mod tests {
         assert!(is_mutating(&cmd(&["symify", "add", "/tmp/x"])));
         assert!(is_mutating(&cmd(&["symify", "remove", "/tmp/x"])));
         assert!(!is_mutating(&cmd(&["symify", "status"])));
+        assert!(!is_mutating(&cmd(&["symify", "diff"])));
         assert!(!is_mutating(&cmd(&["symify", "list"])));
     }
 

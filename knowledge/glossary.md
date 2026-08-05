@@ -34,7 +34,7 @@ Terms as used throughout the project; mechanics in
   `D`) or `copy` (independent copies on both sides; named `sync` before
   PLAN-008).
 - **verb** — the direction-owning command: `add`, `remove`, `list`, `sync`,
-  `deploy`, `status`.
+  `deploy`, `status`, `diff`.
 - **adopt** — move a real live file into the store and replace it with a
   link; the central first-run workflow.
 - **relink** — replace a live file whose content already matches the store

@@ -13,6 +13,11 @@ publish a version it cannot find a heading for.
 
 ### Added
 
+- `symify diff`: a read-only verb showing what `status` only labels — unified
+  content diffs per changed file (store side as `-`, live as `+`), `only in
+  live/store:` lines for one-sided files, and one-line summaries for binary,
+  oversized, or metadata-only differences. Takes the `status` flag set;
+  `--json` reports per-file states without content.
 - Per-machine mappings: `os` and `host` keys on `[mappings.<name>]` (string
   or list; hostnames match case-insensitively with `*` allowed at a pattern's
   ends). A non-matching mapping is inactive: runs skip it with a one-line

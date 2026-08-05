@@ -32,6 +32,8 @@ pub enum Command {
     Deploy(RunArgs),
     /// Show what each file will do, without changing anything.
     Status(QueryArgs),
+    /// Show what differs, as content diffs (read-only).
+    Diff(QueryArgs),
     /// Start tracking a file: add it to a mapping and adopt it.
     Add(AddArgs),
     /// Stop tracking a file, restoring a standalone copy by default.
@@ -175,6 +177,7 @@ const SUBCOMMANDS: &[&str] = &[
     "sync",
     "deploy",
     "status",
+    "diff",
     "add",
     "remove",
     "rm",
@@ -283,6 +286,7 @@ mod tests {
             "sync",
             "deploy",
             "status",
+            "diff",
             "add",
             "remove",
             "rm",

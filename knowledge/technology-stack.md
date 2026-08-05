@@ -33,7 +33,8 @@ time, per the dependency policy. The current set:
   man page generated from the same clap definition), `serde`, `serde_json`,
   `toml`, `toml_edit` (format-preserving config edits), `thiserror`,
   `directories` (Windows-aware home/dirs), `blake3` (`copy`-mode content
-  equality).
+  equality), `similar` (unified diffs for the `diff` verb; approved
+  2026-08-05).
 - **Rust (dev)**: `tempfile`, `assert_cmd` for CLI tests, `insta` for
   snapshot assertions on human output.
 - **Tooling** (pinned in `.mise.toml`): `cargo-typify` (schema → Rust

@@ -771,3 +771,73 @@ fn add_and_remove_refuse_an_inactive_mapping() {
         .code(2);
 }
 
+// ----- diff --------------------------------------------------------------
+
+#[test]
+fn diff_renders_content_and_per_file_states() {
+    let fx = Fx::copy("backup", &["\"conf\" = true"]);
+    fx.write(&fx.lp("conf/a.txt"), b"line1\nline2\nline3\n");
+    fx.write(&fx.sp("conf/a.txt"), b"line1\nCHANGED\nline3\n");
+    fx.write(&fx.lp("conf/new.txt"), b"new\n");
+    fx.write(&fx.sp("conf/stale.txt"), b"stale\n");
+    fx.write(&fx.sp("conf/bin.dat"), b"\x00\x01\x02");
+    fx.write(&fx.lp("conf/bin.dat"), b"\x00\x01\x02\x03");
+
+    let out = fx.cmd("diff").assert().code(1); // drift exit…
+    fx.cmd("status").assert().code(1); // …matching status on the same tree
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    // Unified diff, store as old (-), live as new (+).
+    assert!(stdout.contains("-CHANGED"), "got: {stdout}");
+    assert!(stdout.contains("+line2"), "got: {stdout}");
+    assert!(stdout.contains("only in live:"), "got: {stdout}");
+    assert!(stdout.contains("only in store:"), "got: {stdout}");
+    assert!(stdout.contains("binary files differ"), "got: {stdout}");
+
+    // JSON: per-file paths and states, no content hunks.
+    let out = fx.cmd("diff").arg("--json").assert().code(1);
+    let doc: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    let files = doc["entries"][0]["files"].as_array().unwrap();
+    let states: Vec<&str> = files.iter().map(|f| f["state"].as_str().unwrap()).collect();
+    assert!(states.contains(&"differs"), "got: {doc}");
+    assert!(states.contains(&"live-only"), "got: {doc}");
+    assert!(states.contains(&"store-only"), "got: {doc}");
+}
+
+#[test]
+fn diff_symlink_mode_states_and_clean_exit() {
+    let fx = Fx::new("backup", &["\"a\" = true", "\"b\" = true"]);
+    // a: unadopted with content that differs -> a real diff.
+    fx.write(&fx.lp("a"), b"live\n");
+    fx.write(&fx.sp("a"), b"store\n");
+    // b: wrong target.
+    fx.write(&fx.sp("b"), b"x");
+    std::os::unix::fs::symlink(fx.sp("a"), fx.lp("b")).unwrap();
+
+    let out = fx.cmd("diff").assert().code(1);
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(stdout.contains("unadopted"), "got: {stdout}");
+    assert!(stdout.contains("-store"), "got: {stdout}");
+    assert!(stdout.contains("+live"), "got: {stdout}");
+    assert!(stdout.contains("wrong-target"), "got: {stdout}");
+    assert!(stdout.contains("expected"), "got: {stdout}");
+
+    // sync adopts a (b is a link — nothing to capture); deploy repairs b's
+    // wrong target. Diff then goes silent and exits 0.
+    fx.cmd("sync").assert().success();
+    fx.cmd("deploy").assert().success();
+    let out = fx.cmd("diff").assert().success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert_eq!(
+        stdout.trim(),
+        "diff: 2 ok, 0 drift, 0 failed",
+        "got: {stdout}"
+    );
+}
+
+#[test]
+fn diff_is_not_captured_by_the_bare_path_shortcut() {
+    // `symify diff` must stay the verb, not become `add diff`.
+    let fx = Fx::new("backup", &[]);
+    fx.cmd("diff").assert().success();
+}
+

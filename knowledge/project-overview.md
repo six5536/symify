@@ -22,7 +22,8 @@ it applies to any files to be mirrored, backed up, or deployed across
 machines. How it works is in [architecture](architecture.md); the
 user-facing introduction is the [README](/README.md).
 
-Six verbs: `add`, `remove`, `list`, `sync`, `deploy`, `status`. Safe by
+Seven verbs: `add`, `remove`, `list`, `sync`, `deploy`, `status`, `diff`.
+Safe by
 default: overwrites are backed up, copies are additive, and nothing outside
 the config is ever touched.
 

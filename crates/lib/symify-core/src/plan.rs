@@ -565,6 +565,67 @@ fn walk_copy(
     Ok(())
 }
 
+// ----- per-file diff pairs (the `diff` verb) -----------------------------
+
+/// How one file inside an entry differs between the two sides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffState {
+    /// Present on both sides with different content (per the run's
+    /// `--checksum`/`--modify-window` equality options).
+    Differs,
+    /// Present only on the live side.
+    LiveOnly,
+    /// Present only on the store side.
+    StoreOnly,
+}
+
+/// One differing file: the resolved paths on both sides and how they differ.
+/// Read-only data for rendering; no operation is implied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffPair {
+    /// Live-side path.
+    pub live: PathBuf,
+    /// Store-side path.
+    pub store: PathBuf,
+    /// The difference.
+    pub state: DiffState,
+}
+
+/// The per-file differences between an entry's two sides, walking directories
+/// over the union of their (artifact-filtered) entries — symmetric, matching
+/// what [`fs::quick_equal`]'s set comparison calls a difference. Read-only.
+pub fn diff_pairs(live: &Path, store: &Path, opts: RunOptions) -> Result<Vec<DiffPair>> {
+    let mut out = Vec::new();
+    walk_diff(live, store, opts, &mut out)?;
+    Ok(out)
+}
+
+fn walk_diff(live: &Path, store: &Path, opts: RunOptions, out: &mut Vec<DiffPair>) -> Result<()> {
+    let pair = |state| DiffPair {
+        live: live.to_path_buf(),
+        store: store.to_path_buf(),
+        state,
+    };
+    let (l, s) = (fs::inspect(live)?, fs::inspect(store)?);
+    match (l.is_missing(), s.is_missing()) {
+        (true, true) => {}
+        (false, true) => out.push(pair(DiffState::LiveOnly)),
+        (true, false) => out.push(pair(DiffState::StoreOnly)),
+        (false, false) => {
+            if l == NodeKind::Dir && s == NodeKind::Dir {
+                let mut names = fs::dir_entries(live)?;
+                names.extend(fs::dir_entries(store)?);
+                for name in &names {
+                    walk_diff(&live.join(name), &store.join(name), opts, out)?;
+                }
+            } else if !opts.equal(live, store)? {
+                out.push(pair(DiffState::Differs));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn mv(from: &Path, to: &Path) -> FsOp {
     FsOp::Move {
         from: from.to_path_buf(),

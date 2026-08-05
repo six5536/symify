@@ -30,7 +30,7 @@ verbosity system; reporting is the per-entry human or `--json` output.
 # Exit codes
 
 - `0` — success / clean.
-- `1` — drift: for `status`, any entry out of sync; for `sync`/`deploy`, an
+- `1` — drift: for `status`/`diff`, any entry out of sync; for `sync`/`deploy`, an
   unresolved `skip` conflict.
 - `2` — error: one or more entries failed, or a config/IO error.
 

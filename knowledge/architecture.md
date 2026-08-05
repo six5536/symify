@@ -53,6 +53,7 @@ name *locations*, never roles.
 | `sync`   | `live` → `store` | Capture/push live files into the store (includes adoption). |
 | `deploy` | `store` → `live` | Install the store onto a machine. |
 | `status` | read-only        | Report per-entry state; never mutates. |
+| `diff`   | read-only        | Show what differs as content diffs; never mutates. |
 
 **Modes — mechanism** (`mode = symlink | copy`):
 

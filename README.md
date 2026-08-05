@@ -134,6 +134,7 @@ autocomplete and validation, and documents every field.
 | `sync`           | `live` → `store` | Bring your live files into the store.              |
 | `deploy`         | `store` → `live` | Set a machine up from the store.                   |
 | `status`         | read-only        | Report the state of each entry.                    |
+| `diff`           | read-only        | Show what differs, as content diffs.               |
 | `completions <shell>` | read-only   | Print a shell completion script (bash, zsh, fish, PowerShell, elvish). |
 
 - `symify <path>` is shorthand for `symify add <path>`, since adding is the
@@ -141,10 +142,10 @@ autocomplete and validation, and documents every field.
   use `symify add status` to disambiguate.)
 - `add`/`remove` take `-m <mapping>` (defaults to your sole mapping) and edit the
   config in place, preserving comments. `remove --no-restore` leaves the link.
-- `sync`/`deploy`/`status`/`list` take `-m <mapping>` (repeatable) to act on
-  specific mappings; omit it for all.
+- `sync`/`deploy`/`status`/`diff`/`list` take `-m <mapping>` (repeatable) to
+  act on specific mappings; omit it for all.
 - `sync`/`deploy`/`add`/`remove` take `--dry-run`. Every verb that reads your
-  config — all of the above plus `status` and `list` — takes `--json` and
+  config — all of the above plus `status`, `diff` and `list` — takes `--json` and
   `-c <file>` (repeatable; replaces the usual config locations) and creates a
   default config if none exists, so there's no separate `init`. `completions`
   reads no config and takes none of these.
@@ -154,8 +155,11 @@ autocomplete and validation, and documents every field.
   other side yourself (`rm` / `git rm`). Extra flags:
   - `--checksum` — compare file content exactly instead of by size+mtime.
   - `--modify-window <SECONDS>` — treat mtimes within N seconds as equal, for
-    coarse-granularity filesystems (default 0 = exact). `status` accepts
-    `--checksum`/`--modify-window` too, so its report matches a run.
+    coarse-granularity filesystems (default 0 = exact). `status` and `diff`
+    accept `--checksum`/`--modify-window` too, so their reports match a run.
+- `diff` shows unified content diffs (store side as `-`, your live edits as
+  `+`), plus `only in live/store:` lines for one-sided files. Binary and
+  oversized (>1 MiB) files are summarised in one line, never dumped.
 
 Run `symify <command> --help` for the full flag reference, or `symify -V` for the
 version. Every command exits `0` when clean, `1` on drift, and `2` on error.

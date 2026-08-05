@@ -30,6 +30,7 @@ symify list            [-m MAP]... [-c FILE]... [--entries] [--json]            
 symify sync            [-m MAP]... [-c FILE]... [--dry-run] [-y] [--checksum] [--modify-window N] [--json]
 symify deploy          [-m MAP]... [-c FILE]... [--dry-run] [-y] [--checksum] [--modify-window N] [--json]
 symify status          [-m MAP]... [-c FILE]... [--checksum] [--modify-window N] [--json]
+symify diff            [-m MAP]... [-c FILE]... [--checksum] [--modify-window N] [--json]
 symify completions <SHELL>   (bash | zsh | fish | powershell | elvish)
 symify man             (hidden; roff to stdout, for packaging)
 
@@ -99,6 +100,20 @@ absent, every config-reading verb first creates it from the starter template
 line for editor validation), printing `Created <path> (defaults).`, then
 proceeds. An explicitly-named `-c <file>` that is missing stays an error —
 auto-init never fabricates a file the user named.
+
+# `diff` reporting
+
+Read-only, the content view of `status`: per non-clean entry a header line,
+then unified diffs (store as `-`, live as `+`, headers naming both absolute
+paths) for changed files and `only in live/store:` lines for one-sided ones —
+the union walk matches what the quick-check calls a difference. Symlinks
+compare by target; kind mismatches, binary content, and files over 1 MiB get
+a one-line summary instead of hunks; byte-identical files that fail the
+quick-check report `contents identical (metadata differs)`. `--json` carries
+per-file `{live, store, state}` (state: `differs` | `live-only` |
+`store-only`) with no content hunks. Exit codes as `status`. `diff` is in the
+bare-path shortcut's shadow list; `symify add diff` tracks a file named
+`diff`.
 
 # `status` reporting
 

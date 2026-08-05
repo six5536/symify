@@ -11,7 +11,9 @@ use serde::Serialize;
 use symify_core::config::ResolvedConfig;
 use symify_core::model::Mode;
 use symify_core::status::{StatusEntry, StatusLabel};
-use symify_core::{Action, ActionKind, FsOp, Outcome, Planned, Verb, entry_paths};
+use symify_core::{
+    Action, ActionKind, DiffPair, DiffState, FsOp, Outcome, Planned, Verb, entry_paths,
+};
 
 /// Exit code: success / clean.
 pub const EXIT_OK: u8 = 0;
@@ -433,6 +435,247 @@ pub fn render_status<W: Write>(
     } else {
         EXIT_OK
     })
+}
+
+// ----- diff --------------------------------------------------------------
+
+/// Content larger than this is summarised, not diffed — `diff` is for
+/// dotfiles, not databases.
+const MAX_DIFF_BYTES: u64 = 1 << 20;
+
+#[derive(Serialize)]
+struct DiffJson<'a> {
+    entries: Vec<DiffEntryJson>,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    inactive_mappings: &'a [InactiveNote],
+    summary: StatusSummary,
+}
+
+#[derive(Serialize)]
+struct DiffEntryJson {
+    mapping: String,
+    key: String,
+    live: String,
+    store: String,
+    mode: &'static str,
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
+    /// Per-file differences (paths and state only — no content hunks).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    files: Vec<DiffFileJson>,
+}
+
+#[derive(Serialize)]
+struct DiffFileJson {
+    live: String,
+    store: String,
+    state: &'static str,
+}
+
+fn diff_state_str(s: DiffState) -> &'static str {
+    match s {
+        DiffState::Differs => "differs",
+        DiffState::LiveOnly => "live-only",
+        DiffState::StoreOnly => "store-only",
+    }
+}
+
+/// Render `diff` results; returns the process exit code (same policy as
+/// `status`). `pairs` is parallel to `entries`: the per-file differences of
+/// entries that have any, empty otherwise.
+pub fn render_diff<W: Write>(
+    w: &mut W,
+    entries: &[StatusEntry],
+    pairs: &[Vec<DiffPair>],
+    inactive: &[InactiveNote],
+    json: bool,
+) -> io::Result<u8> {
+    let mut summary = StatusSummary::default();
+    for e in entries {
+        if e.label.is_failure() {
+            summary.failed += 1;
+        } else if e.label.is_clean() {
+            summary.clean += 1;
+        } else {
+            summary.drift += 1;
+        }
+    }
+    let (clean, drift, failed) = (summary.clean, summary.drift, summary.failed);
+
+    if json {
+        let out = entries
+            .iter()
+            .zip(pairs)
+            .map(|(e, ps)| DiffEntryJson {
+                mapping: e.mapping.clone(),
+                key: e.key.clone(),
+                live: e.live.display().to_string(),
+                store: e.store.display().to_string(),
+                mode: mode_str(e.mode),
+                status: status_str(&e.label),
+                detail: match &e.label {
+                    StatusLabel::Failed(m) => Some(m.clone()),
+                    _ => None,
+                },
+                files: ps
+                    .iter()
+                    .map(|p| DiffFileJson {
+                        live: p.live.display().to_string(),
+                        store: p.store.display().to_string(),
+                        state: diff_state_str(p.state),
+                    })
+                    .collect(),
+            })
+            .collect();
+        let doc = DiffJson {
+            entries: out,
+            inactive_mappings: inactive,
+            summary,
+        };
+        writeln!(w, "{}", serde_json::to_string_pretty(&doc).unwrap())?;
+    } else {
+        for (e, ps) in entries.iter().zip(pairs) {
+            print_diff_entry(w, e, ps)?;
+        }
+        print_inactive(w, inactive)?;
+        writeln!(w, "\ndiff: {clean} ok, {drift} drift, {failed} failed")?;
+    }
+
+    Ok(if failed > 0 {
+        EXIT_FAILURE
+    } else if drift > 0 {
+        EXIT_DRIFT
+    } else {
+        EXIT_OK
+    })
+}
+
+/// One entry's human diff: a status-style header line, then its per-file
+/// content. Clean entries are silent.
+fn print_diff_entry<W: Write>(w: &mut W, e: &StatusEntry, pairs: &[DiffPair]) -> io::Result<()> {
+    if e.label.is_clean() {
+        return Ok(());
+    }
+    let header = status_str(&e.label);
+    writeln!(w, "{:<13} {}/{}", header, e.mapping, e.key)?;
+    match &e.label {
+        StatusLabel::Failed(msg) => writeln!(w, "  {msg}")?,
+        StatusLabel::WrongTarget => {
+            let actual = std::fs::read_link(&e.live)
+                .map(|t| t.display().to_string())
+                .unwrap_or_else(|err| format!("<unreadable: {err}>"));
+            writeln!(w, "  expected {}", e.store.display())?;
+            writeln!(w, "  actual   {actual}")?;
+        }
+        StatusLabel::LiveMissing => writeln!(w, "  live side missing: {}", e.live.display())?,
+        StatusLabel::StoreMissing => writeln!(w, "  store side missing: {}", e.store.display())?,
+        StatusLabel::Missing => writeln!(w, "  both sides missing")?,
+        _ => {
+            if pairs.is_empty() {
+                // The whole-entry check saw a difference the per-file walk
+                // doesn't reproduce (e.g. an unadopted file whose content
+                // already matches — sync would relink it).
+                writeln!(w, "  content matches the store")?;
+            }
+            for p in pairs {
+                print_diff_pair(w, p)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn print_diff_pair<W: Write>(w: &mut W, p: &DiffPair) -> io::Result<()> {
+    match p.state {
+        DiffState::LiveOnly => writeln!(w, "only in live: {}", p.live.display()),
+        DiffState::StoreOnly => writeln!(w, "only in store: {}", p.store.display()),
+        DiffState::Differs => print_content_diff(w, &p.store, &p.live),
+    }
+}
+
+/// A unified content diff, store as old (`-`) and live as new (`+`), so it
+/// reads as "what your live edits would push into the store". Non-text and
+/// oversize content is summarised in one line instead.
+fn print_content_diff<W: Write>(w: &mut W, store: &Path, live: &Path) -> io::Result<()> {
+    let (smd, lmd) = match (
+        std::fs::symlink_metadata(store),
+        std::fs::symlink_metadata(live),
+    ) {
+        (Ok(s), Ok(l)) => (s, l),
+        _ => return writeln!(w, "unreadable: {} or {}", store.display(), live.display()),
+    };
+
+    if smd.file_type().is_symlink() && lmd.file_type().is_symlink() {
+        let target = |p: &Path| {
+            std::fs::read_link(p)
+                .map(|t| t.display().to_string())
+                .unwrap_or_else(|_| "<unreadable>".into())
+        };
+        writeln!(w, "links differ: live -> {}", target(live))?;
+        return writeln!(w, "              store -> {}", target(store));
+    }
+    // Mixed kinds (including symlink vs file/dir): name both sides honestly
+    // rather than diffing content that isn't comparable.
+    let kind = |m: &std::fs::Metadata| {
+        if m.file_type().is_symlink() {
+            "symlink"
+        } else if m.is_dir() {
+            "directory"
+        } else {
+            "file"
+        }
+    };
+    if smd.file_type().is_symlink() || lmd.file_type().is_symlink() || smd.is_dir() || lmd.is_dir()
+    {
+        return writeln!(
+            w,
+            "kinds differ: live is a {}, store is a {}",
+            kind(&lmd),
+            kind(&smd)
+        );
+    }
+    if smd.len() > MAX_DIFF_BYTES || lmd.len() > MAX_DIFF_BYTES {
+        return writeln!(
+            w,
+            "too large to diff ({} ↔ {} bytes): {}",
+            smd.len(),
+            lmd.len(),
+            live.display()
+        );
+    }
+
+    let (old, new) = match (std::fs::read(store), std::fs::read(live)) {
+        (Ok(o), Ok(n)) => (o, n),
+        _ => return writeln!(w, "unreadable: {} or {}", store.display(), live.display()),
+    };
+    if old == new {
+        // Quick-check drift with identical bytes: mtime or permissions only.
+        return writeln!(
+            w,
+            "contents identical (metadata differs): {}",
+            live.display()
+        );
+    }
+    let is_binary = |b: &[u8]| b.iter().take(8192).any(|&c| c == 0);
+    if is_binary(&old) || is_binary(&new) {
+        return writeln!(
+            w,
+            "binary files differ ({} ↔ {} bytes)",
+            old.len(),
+            new.len()
+        );
+    }
+
+    let (old, new) = (String::from_utf8_lossy(&old), String::from_utf8_lossy(&new));
+    let text = similar::TextDiff::from_lines(old.as_ref(), new.as_ref());
+    write!(
+        w,
+        "{}",
+        text.unified_diff()
+            .context_radius(3)
+            .header(&store.display().to_string(), &live.display().to_string())
+    )
 }
 
 // ----- add / remove / list ----------------------------------------------
