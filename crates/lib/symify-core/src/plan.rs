@@ -404,6 +404,76 @@ pub fn entry_paths(m: &ResolvedMapping, key: &str, value: &LinkValue) -> (PathBu
     resolve_paths(m, key, value.kind())
 }
 
+// ----- shared targets (collision notes) ----------------------------------
+
+/// Which side of the entries collides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SharedSide {
+    /// Several entries resolve to the same live path — almost always a
+    /// config accident (two things claiming one location).
+    Live,
+    /// Several entries resolve to the same store path — legitimate (one
+    /// source of truth surfaced at several live paths), but hazardous for
+    /// `sync` in copy mode with diverging lives.
+    Store,
+}
+
+/// A group of entries whose resolved paths collide on one side.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedTarget {
+    /// The colliding side.
+    pub side: SharedSide,
+    /// The (lexically normalized) path the entries share.
+    pub path: PathBuf,
+    /// The `(mapping, key)` of each participating entry, in config order.
+    pub entries: Vec<(String, String)>,
+}
+
+/// Group active, non-disabled entries whose resolved paths collide — same
+/// store path (`Store`) or same live path (`Live`), compared lexically
+/// normalized. Purely informational: a note for the binary to render, never
+/// an error, and behaviour of the colliding entries is unchanged. Store
+/// groups come first, each side sorted by path.
+pub fn shared_targets(config: &ResolvedConfig) -> Vec<SharedTarget> {
+    use std::collections::BTreeMap;
+
+    let mut by_live: BTreeMap<PathBuf, Vec<(String, String)>> = BTreeMap::new();
+    let mut by_store: BTreeMap<PathBuf, Vec<(String, String)>> = BTreeMap::new();
+    for m in &config.mappings {
+        if m.inactive.is_some() {
+            continue;
+        }
+        for (key, value) in &m.links {
+            if matches!(value.kind(), LinkKind::Disabled) {
+                continue;
+            }
+            let (live, store) = entry_paths(m, key, value);
+            let entry = (m.name.clone(), key.clone());
+            by_live
+                .entry(fs::normalize(&live))
+                .or_default()
+                .push(entry.clone());
+            by_store
+                .entry(fs::normalize(&store))
+                .or_default()
+                .push(entry);
+        }
+    }
+
+    let groups = |side: SharedSide, map: BTreeMap<PathBuf, Vec<(String, String)>>| {
+        map.into_iter()
+            .filter(|(_, entries)| entries.len() > 1)
+            .map(move |(path, entries)| SharedTarget {
+                side,
+                path,
+                entries,
+            })
+    };
+    groups(SharedSide::Store, by_store)
+        .chain(groups(SharedSide::Live, by_live))
+        .collect()
+}
+
 /// Resolve an entry's `(live, store)` absolute paths from its key and value kind.
 pub(crate) fn resolve_paths(m: &ResolvedMapping, key: &str, kind: LinkKind) -> (PathBuf, PathBuf) {
     let key_path = Path::new(key);
@@ -1402,6 +1472,90 @@ mod tests {
                 ],
             }
         );
+    }
+
+    // ---- shared targets ----
+
+    /// A mapping literal for shared-target tests; paths need not exist
+    /// (the helper never touches the filesystem).
+    fn st_mapping(name: &str, live: &str, links: Vec<(&str, LinkValue)>) -> ResolvedMapping {
+        ResolvedMapping {
+            name: name.into(),
+            live: live.into(),
+            store: "/store".into(),
+            mode: Mode::Symlink,
+            conflict: Conflict::Backup,
+            links: links.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+            inactive: None,
+            backup_keep: 0,
+        }
+    }
+
+    fn s(v: &str) -> LinkValue {
+        LinkValue::String(v.into())
+    }
+
+    #[test]
+    fn shared_targets_groups_store_and_live_collisions() {
+        let mut b = st_mapping("b", "/liveB", vec![("prof.d/profile", s("shared/profile"))]);
+        // Normalization-equivalent spelling must still collide.
+        b.store = "/x/../store".into();
+        let cfg = ResolvedConfig {
+            mappings: vec![
+                st_mapping(
+                    "a",
+                    "/liveA",
+                    vec![
+                        ("profile", s("shared/profile")),
+                        ("solo", LinkValue::Boolean(true)),
+                    ],
+                ),
+                b,
+                // Two entries claiming one live path via an absolute key.
+                st_mapping(
+                    "c",
+                    "/liveC",
+                    vec![("/tmp/one", s("c1")), ("sub/../../tmp/one", s("c2"))],
+                ),
+            ],
+        };
+        let groups = shared_targets(&cfg);
+        assert_eq!(groups.len(), 2, "got: {groups:?}");
+
+        // Store groups first.
+        assert_eq!(groups[0].side, SharedSide::Store);
+        assert_eq!(groups[0].path, PathBuf::from("/store/shared/profile"));
+        assert_eq!(
+            groups[0].entries,
+            vec![
+                ("a".to_string(), "profile".to_string()),
+                ("b".to_string(), "prof.d/profile".to_string()),
+            ]
+        );
+
+        assert_eq!(groups[1].side, SharedSide::Live);
+        assert_eq!(groups[1].path, PathBuf::from("/tmp/one"));
+        assert_eq!(groups[1].entries.len(), 2);
+    }
+
+    #[test]
+    fn shared_targets_skip_disabled_and_inactive() {
+        let mut inactive = st_mapping("off", "/liveB", vec![("x", s("shared"))]);
+        inactive.inactive = Some(crate::config::InactiveReason::Os);
+        let cfg = ResolvedConfig {
+            mappings: vec![
+                st_mapping(
+                    "a",
+                    "/liveA",
+                    vec![("x", s("shared")), ("y", LinkValue::Boolean(false))],
+                ),
+                // The disabled `y` would mirror to /store/y like this one; the
+                // inactive mapping's entry would collide on /store/shared.
+                st_mapping("z", "/liveC", vec![("y", LinkValue::Boolean(true))]),
+                inactive,
+            ],
+        };
+        assert_eq!(shared_targets(&cfg), vec![], "disabled + inactive excluded");
     }
 
     // ---- helpers exercised directly (not just via plan) ----

@@ -16,7 +16,11 @@ links:
 
 # Open
 
-(Nothing at present.)
+- **Same-second `.bak` name collision.** Two backups of the same path within
+  one second get the same `<name>.<timestamp>.bak` name, and the second
+  rename silently overwrites the first (observed 2026-08-05 with two entries
+  sharing a store path, both conflicting in one run). Timestamps are
+  second-granular; a uniquifying suffix on collision would fix it.
 
 # Decided against
 

@@ -244,7 +244,7 @@ fn run_verb(verb: Verb, args: RunArgs) -> symify_core::Result<u8> {
         args.dry_run,
         &planned,
         &outcomes,
-        &output::inactive_notes(&cfg),
+        &output::Notes::from_config(&cfg),
         args.json,
     )
     .map_err(stdout_err)
@@ -260,7 +260,7 @@ fn run_status(args: QueryArgs) -> symify_core::Result<u8> {
     output::render_status(
         &mut io::stdout().lock(),
         &status(&cfg, opts)?,
-        &output::inactive_notes(&cfg),
+        &output::Notes::from_config(&cfg),
         args.json,
     )
     .map_err(stdout_err)
@@ -289,7 +289,7 @@ fn run_diff(args: QueryArgs) -> symify_core::Result<u8> {
         &mut io::stdout().lock(),
         &entries,
         &pairs,
-        &output::inactive_notes(&cfg),
+        &output::Notes::from_config(&cfg),
         args.json,
     )
     .map_err(stdout_err)

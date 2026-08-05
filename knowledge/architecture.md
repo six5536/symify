@@ -167,6 +167,19 @@ the store-side path (real content).
 | `"/absolute/path/file.txt" = true` | `/absolute/path/file.txt` | `~/dotfiles/absolute/path/file.txt` |
 | `"profile.md" = "fixed/in/store/file.md"` | `~/profile.md` | `~/dotfiles/fixed/in/store/file.md` |
 
+## Shared store targets
+
+Explicit values may resolve several entries to the same store path `D` (one
+source of truth surfaced at several live paths). In `symlink` mode every
+live path links to the one store file and edits through any of them are
+edits of the store; in `copy` mode `deploy` fans the file out as
+independent copies. `sync` with shared-`D` copy entries is last-writer-wins
+(entries are independent) and best avoided — treat the store as the source
+of truth. Colliding entries — same `D`, or same live path `S` (usually an
+accident) — are reported as notes by the verbs; the contract is in
+[api-contracts](api-contracts.md). Detection (`plan::shared_targets`) is a
+pure, lexically-normalized grouping; it never alters behaviour.
+
 ## Directory entries
 
 A key may resolve to a directory. In `symlink` mode it is linked **as a whole

@@ -971,3 +971,85 @@ fn gate_refusal_names_the_pending_delete() {
     );
 }
 
+// ----- shared targets ----------------------------------------------------
+
+/// Two mappings, different live roots, both explicitly targeting one store
+/// file.
+fn shared_store_fx() -> Fx {
+    let fx = Fx::with_body(
+        concat!(
+            "[mappings.a.links]\n",
+            "\"profile\" = \"shared/profile\"\n\n",
+            "[mappings.b]\n",
+            "live = \"LIVEB\"\n",
+            "[mappings.b.links]\n",
+            "\"prof.d/profile\" = \"shared/profile\"\n"
+        ),
+        "backup",
+    );
+    let live_b = fx.live.parent().unwrap().join("liveB");
+    std::fs::create_dir_all(&live_b).unwrap();
+    let text = fx.config_text().replace("LIVEB", &live_b.to_string_lossy());
+    std::fs::write(&fx.config, text).unwrap();
+    fx
+}
+
+#[test]
+fn shared_store_target_is_noted_not_errored() {
+    let fx = shared_store_fx();
+    fx.write(&fx.sp("shared/profile"), b"content\n");
+
+    // deploy fans out; the note appears; the run is still clean exit 0.
+    let out = fx.cmd("deploy").assert().success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains("note: 2 entries share store path")
+            && stdout.contains("a/profile, b/prof.d/profile"),
+        "got: {stdout}"
+    );
+
+    // status: same note, clean exit; JSON carries the group.
+    let out = fx.cmd("status").arg("--json").assert().success();
+    let doc: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    let st = &doc["shared_targets"][0];
+    assert_eq!(st["side"], "store", "got: {doc}");
+    assert_eq!(st["entries"][0]["mapping"], "a");
+    assert_eq!(st["entries"][1]["key"], "prof.d/profile");
+
+    // diff prints the note too.
+    let out = fx.cmd("diff").assert().success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains("note: 2 entries share store path"),
+        "got: {stdout}"
+    );
+}
+
+#[test]
+fn shared_live_path_is_noted() {
+    // Two entries claiming the same live path (absolute key colliding with a
+    // relative one) — almost always an accident; noted, not blocked.
+    let fx = Fx::with_body(
+        "[mappings.dotfiles.links]\n\"x\" = \"store-x\"\n\"LIVE/x\" = \"store-y\"\n",
+        "backup",
+    );
+    let text = fx
+        .config_text()
+        .replace("LIVE/x", &fx.lp("x").to_string_lossy());
+    std::fs::write(&fx.config, text).unwrap();
+
+    let out = fx.cmd("status").assert(); // exit governed by entry states only
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains("note: 2 entries share live path"),
+        "got: {stdout}"
+    );
+}
+
+#[test]
+fn distinct_targets_produce_no_note() {
+    let fx = Fx::new("backup", &["\"a\" = true", "\"b\" = true"]);
+    let out = fx.cmd("status").assert();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(!stdout.contains("note:"), "got: {stdout}");
+}

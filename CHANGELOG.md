@@ -13,6 +13,13 @@ publish a version it cannot find a heading for.
 
 ### Added
 
+- Shared-target notes: when several entries resolve to the same store path
+  (one source of truth surfaced at several live paths) or the same live path
+  (usually a config accident), the verbs print a
+  `note: N entries share … path` line and `--json` carries a
+  `shared_targets` array. Informational only — exit codes are unchanged. The
+  README documents the shared-store-file pattern, including why `sync`
+  should be avoided for shared copy-mode entries.
 - Windows support (x64): prebuilt binaries via `npm i -g symify` and a `.zip`
   release archive, with CI running the test suite on Windows. Creating
   symlinks needs Developer Mode or elevation; without it, symlink entries

@@ -53,7 +53,7 @@ pub mod status;
 
 pub use error::{Error, Result};
 pub use plan::{
-    Action, ActionKind, DiffPair, DiffState, FsOp, Outcome, Planned, RunOptions, Verb, diff_pairs,
-    entry_paths, execute, plan,
+    Action, ActionKind, DiffPair, DiffState, FsOp, Outcome, Planned, RunOptions, SharedSide,
+    SharedTarget, Verb, diff_pairs, entry_paths, execute, plan, shared_targets,
 };
 pub use status::{StatusEntry, StatusLabel, status};

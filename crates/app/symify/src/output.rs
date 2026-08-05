@@ -57,8 +57,32 @@ pub struct InactiveNote {
     reason: &'static str,
 }
 
+/// The per-config annotations every verb renders alongside its entries:
+/// inactive mappings and shared-target groups. Computed once from the
+/// selected config; empty collections render nothing.
+#[derive(Default)]
+pub struct Notes {
+    inactive: Vec<InactiveNote>,
+    shared: Vec<SharedNote>,
+}
+
+impl Notes {
+    /// Collect the notes for a resolved (and `-m`-selected) config.
+    pub fn from_config(config: &ResolvedConfig) -> Self {
+        Notes {
+            inactive: inactive_notes(config),
+            shared: shared_notes(config),
+        }
+    }
+}
+
+fn print_notes<W: Write>(w: &mut W, notes: &Notes) -> io::Result<()> {
+    print_inactive(w, &notes.inactive)?;
+    print_shared(w, &notes.shared)
+}
+
 /// The inactive mappings of a resolved config, ready to render.
-pub fn inactive_notes(config: &ResolvedConfig) -> Vec<InactiveNote> {
+fn inactive_notes(config: &ResolvedConfig) -> Vec<InactiveNote> {
     config
         .mappings
         .iter()
@@ -79,6 +103,61 @@ fn print_inactive<W: Write>(w: &mut W, notes: &[InactiveNote]) -> io::Result<()>
     Ok(())
 }
 
+// ----- shared targets ----------------------------------------------------
+
+/// A group of entries whose resolved paths collide (same store or live
+/// path). Informational: rendered as one note line / JSON object per group.
+#[derive(Serialize)]
+pub struct SharedNote {
+    side: &'static str,
+    path: String,
+    entries: Vec<SharedEntryJson>,
+}
+
+#[derive(Serialize)]
+struct SharedEntryJson {
+    mapping: String,
+    key: String,
+}
+
+/// The path-collision groups of a resolved config, ready to render.
+fn shared_notes(config: &ResolvedConfig) -> Vec<SharedNote> {
+    symify_core::shared_targets(config)
+        .into_iter()
+        .map(|g| SharedNote {
+            side: match g.side {
+                symify_core::SharedSide::Live => "live",
+                symify_core::SharedSide::Store => "store",
+            },
+            path: g.path.display().to_string(),
+            entries: g
+                .entries
+                .into_iter()
+                .map(|(mapping, key)| SharedEntryJson { mapping, key })
+                .collect(),
+        })
+        .collect()
+}
+
+fn print_shared<W: Write>(w: &mut W, notes: &[SharedNote]) -> io::Result<()> {
+    for n in notes {
+        let list: Vec<String> = n
+            .entries
+            .iter()
+            .map(|e| format!("{}/{}", e.mapping, e.key))
+            .collect();
+        writeln!(
+            w,
+            "note: {} entries share {} path {}: {}",
+            n.entries.len(),
+            n.side,
+            n.path,
+            list.join(", ")
+        )?;
+    }
+    Ok(())
+}
+
 // ----- run (sync / deploy) ----------------------------------------------
 
 #[derive(Serialize)]
@@ -88,6 +167,8 @@ struct RunJson<'a> {
     entries: Vec<RunEntryJson>,
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     inactive_mappings: &'a [InactiveNote],
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    shared_targets: &'a [SharedNote],
     summary: RunSummary,
 }
 
@@ -130,7 +211,7 @@ pub fn render_run<W: Write>(
     dry_run: bool,
     planned: &[Planned],
     outcomes: &[Outcome],
-    inactive: &[InactiveNote],
+    notes: &Notes,
     json: bool,
 ) -> io::Result<u8> {
     let mut summary = RunSummary::default();
@@ -168,7 +249,8 @@ pub fn render_run<W: Write>(
             verb: verb_str(verb),
             dry_run,
             entries,
-            inactive_mappings: inactive,
+            inactive_mappings: &notes.inactive,
+            shared_targets: &notes.shared,
             summary,
         };
         writeln!(w, "{}", serde_json::to_string_pretty(&doc).unwrap())?;
@@ -179,7 +261,7 @@ pub fn render_run<W: Write>(
         for e in &entries {
             print_line(w, e)?;
         }
-        print_inactive(w, inactive)?;
+        print_notes(w, notes)?;
         print_run_summary(w, verb, dry_run, &summary)?;
     }
 
@@ -334,6 +416,8 @@ struct StatusJson<'a> {
     entries: Vec<StatusEntryJson>,
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     inactive_mappings: &'a [InactiveNote],
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    shared_targets: &'a [SharedNote],
     summary: StatusSummary,
 }
 
@@ -374,7 +458,7 @@ fn status_str(label: &StatusLabel) -> &'static str {
 pub fn render_status<W: Write>(
     w: &mut W,
     entries: &[StatusEntry],
-    inactive: &[InactiveNote],
+    notes: &Notes,
     json: bool,
 ) -> io::Result<u8> {
     let mut summary = StatusSummary::default();
@@ -408,7 +492,8 @@ pub fn render_status<W: Write>(
     if json {
         let doc = StatusJson {
             entries: out,
-            inactive_mappings: inactive,
+            inactive_mappings: &notes.inactive,
+            shared_targets: &notes.shared,
             summary,
         };
         writeln!(w, "{}", serde_json::to_string_pretty(&doc).unwrap())?;
@@ -420,7 +505,7 @@ pub fn render_status<W: Write>(
             };
             writeln!(w, "  {:<13} {}/{}{}", e.status, e.mapping, e.key, detail)?;
         }
-        print_inactive(w, inactive)?;
+        print_notes(w, notes)?;
         writeln!(
             w,
             "\nstatus: {} ok, {} drift, {} failed",
@@ -448,6 +533,8 @@ struct DiffJson<'a> {
     entries: Vec<DiffEntryJson>,
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     inactive_mappings: &'a [InactiveNote],
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    shared_targets: &'a [SharedNote],
     summary: StatusSummary,
 }
 
@@ -488,7 +575,7 @@ pub fn render_diff<W: Write>(
     w: &mut W,
     entries: &[StatusEntry],
     pairs: &[Vec<DiffPair>],
-    inactive: &[InactiveNote],
+    notes: &Notes,
     json: bool,
 ) -> io::Result<u8> {
     let mut summary = StatusSummary::default();
@@ -530,7 +617,8 @@ pub fn render_diff<W: Write>(
             .collect();
         let doc = DiffJson {
             entries: out,
-            inactive_mappings: inactive,
+            inactive_mappings: &notes.inactive,
+            shared_targets: &notes.shared,
             summary,
         };
         writeln!(w, "{}", serde_json::to_string_pretty(&doc).unwrap())?;
@@ -538,7 +626,7 @@ pub fn render_diff<W: Write>(
         for (e, ps) in entries.iter().zip(pairs) {
             print_diff_entry(w, e, ps)?;
         }
-        print_inactive(w, inactive)?;
+        print_notes(w, notes)?;
         writeln!(w, "\ndiff: {clean} ok, {drift} drift, {failed} failed")?;
     }
 
@@ -1020,7 +1108,16 @@ mod tests {
     fn render_to_string(json: bool, dry_run: bool) -> (String, u8) {
         let (p, o) = run_fixture();
         let mut buf = Vec::new();
-        let code = render_run(&mut buf, Verb::Sync, dry_run, &p, &o, &[], json).unwrap();
+        let code = render_run(
+            &mut buf,
+            Verb::Sync,
+            dry_run,
+            &p,
+            &o,
+            &Notes::default(),
+            json,
+        )
+        .unwrap();
         (String::from_utf8(buf).unwrap(), code)
     }
 
@@ -1083,7 +1180,16 @@ mod tests {
         let p = vec![planned("x", Mode::Copy, Action::Failed("nope".into()))];
         let o = vec![Outcome::Failed("nope".into())];
         let mut buf = Vec::new();
-        let code = render_run(&mut buf, Verb::Deploy, false, &p, &o, &[], true).unwrap();
+        let code = render_run(
+            &mut buf,
+            Verb::Deploy,
+            false,
+            &p,
+            &o,
+            &Notes::default(),
+            true,
+        )
+        .unwrap();
         assert_eq!(code, EXIT_FAILURE);
         let v: Value = serde_json::from_str(&String::from_utf8(buf).unwrap()).unwrap();
         assert_eq!(v["verb"], "deploy");
@@ -1121,7 +1227,7 @@ mod tests {
     #[test]
     fn status_human_every_label() {
         let mut buf = Vec::new();
-        let code = render_status(&mut buf, &status_fixture(), &[], false).unwrap();
+        let code = render_status(&mut buf, &status_fixture(), &Notes::default(), false).unwrap();
         // Has drift and a failure -> failure code wins.
         assert_eq!(code, EXIT_FAILURE);
         insta::assert_snapshot!("status_human_every_label", String::from_utf8(buf).unwrap());
@@ -1130,7 +1236,7 @@ mod tests {
     #[test]
     fn status_json_summary_and_detail() {
         let mut buf = Vec::new();
-        render_status(&mut buf, &status_fixture(), &[], true).unwrap();
+        render_status(&mut buf, &status_fixture(), &Notes::default(), true).unwrap();
         let v: Value = serde_json::from_str(&String::from_utf8(buf).unwrap()).unwrap();
         let sum = &v["summary"];
         // Ok + Disabled are clean (2); failed (1); the rest are drift (6).
@@ -1158,7 +1264,7 @@ mod tests {
             label: StatusLabel::Ok,
         }];
         let mut buf = Vec::new();
-        let code = render_status(&mut buf, &entries, &[], false).unwrap();
+        let code = render_status(&mut buf, &entries, &Notes::default(), false).unwrap();
         assert_eq!(code, EXIT_OK);
     }
 

@@ -101,6 +101,19 @@ line for editor validation), printing `Created <path> (defaults).`, then
 proceeds. An explicitly-named `-c <file>` that is missing stays an error —
 auto-init never fabricates a file the user named.
 
+# Shared-target notes
+
+When active, non-disabled entries resolve to the same normalized path —
+store side (legitimate, see [architecture](architecture.md)) or live side
+(usually an accident) — `sync`/`deploy`/`status`/`diff` print one line per
+group. Detection is scoped to the run: entries excluded by `-m` do not
+participate, and `add`/`remove` (single-entry plans) never note — a collision
+created by `add --store-path` surfaces on the next reporting verb. Format: `note: N entries share store path <path>: a/profile, b/prof.d/profile`
+(`live` for the `S` case). `--json` carries
+`shared_targets: [{ side: "store" | "live", path, entries: [{ mapping,
+key }] }]`, omitted when empty. Notes are informational only: exit codes and
+entry behaviour are unchanged.
+
 # `diff` reporting
 
 Read-only, the content view of `status`: per non-clean entry a header line,

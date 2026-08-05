@@ -119,6 +119,31 @@ Hostnames match case-insensitively, and `*` may open and/or close a pattern
 refuse an inactive mapping — edit the config file directly for cross-machine
 changes.
 
+### Sharing one store file between paths
+
+Explicit values may point several live paths at the same store path — across
+mappings or within one:
+
+```toml
+[mappings.a.links]
+"profile" = "shared/profile"
+
+[mappings.b]
+live = "~/other"
+[mappings.b.links]
+"prof.d/profile" = "shared/profile"
+```
+
+In `symlink` mode this gives one source of truth surfaced at several places:
+`deploy` links every live path to the store file, and an edit through any of
+them is an edit of the store. In `copy` mode it is a fan-out: `deploy`
+installs independent copies of the one store file. **Avoid `sync` for shared
+copy-mode entries** — entries are planned independently, so diverging copies
+overwrite the shared store file last-writer-wins. symify prints a
+`note: N entries share store path …` line (and a `shared_targets` array in
+`--json`) whenever entries collide like this, including the same-live-path
+case, which is usually a config accident. Notes never change the exit code.
+
 ### Files and merging
 
 symify reads `~/.config/symify/symify.toml` and any `~/.config/symify/conf.d/*.toml`
