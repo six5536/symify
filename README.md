@@ -98,6 +98,27 @@ conflict = "backup"   # skip | replace (overwrite, no backup) | backup (.<timest
 "old.conf" = false                           # disabled
 ```
 
+### Per-machine setups
+
+A mapping can declare which machines it applies to with `os` and `host`
+(string or list). On other machines the mapping is **inactive**: runs skip it
+with a one-line note and still exit 0, so one config serves a mixed fleet.
+
+```toml
+[mappings.linux-only]
+os = "linux"                  # "linux" | "macos" | "windows"
+
+[mappings.work]
+host = ["wrk-*", "*.corp"]    # case-insensitive; * allowed at the ends
+```
+
+Hostnames match case-insensitively, and `*` may open and/or close a pattern
+(not sit in the middle). Both keys together must both match. `add`/`remove`
+refuse an inactive mapping — edit the config file directly for cross-machine
+changes.
+
+### Files and merging
+
 symify reads `~/.config/symify/symify.toml` and any `~/.config/symify/conf.d/*.toml`
 files, with later files winning key by key. The JSON Schema at
 [`schema/symify.schema.json`](schema/symify.schema.json) gives editors TOML

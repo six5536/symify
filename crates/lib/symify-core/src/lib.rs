@@ -32,7 +32,8 @@
 //!     store.display(),
 //! ))?;
 //!
-//! let resolved = config::load_config(&[cfg])?;
+//! let machine = config::MachineContext::with_host("wrk-01");
+//! let resolved = config::load_config(&[cfg], &machine)?;
 //! let planned = plan::plan(&resolved, Verb::Sync, RunOptions::default())?;
 //! let outcomes = plan::execute(&planned, &SystemClock, /* dry_run = */ true);
 //! assert_eq!(outcomes.len(), planned.len());

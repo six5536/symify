@@ -67,6 +67,24 @@
         }
       ]
     },
+    "MachineMatch": {
+      "title": "MachineMatch",
+      "description": "A machine condition: one pattern or a list of alternatives. A pattern matches case-insensitively; `*` is allowed at the start and/or end of a host pattern (e.g. \"wrk-*\", \"*.local\"), nowhere else.",
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "A single pattern."
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "Alternatives; the condition matches when any pattern matches."
+        }
+      ]
+    },
     "Settings": {
       "title": "Settings",
       "description": "Defaults applied to every mapping; each mapping may override them.",
@@ -119,6 +137,14 @@
           "additionalProperties": {
             "$ref": "#/$defs/LinkValue"
           }
+        },
+        "os": {
+          "$ref": "#/$defs/MachineMatch",
+          "description": "Operating systems this mapping applies to: \"linux\", \"macos\" or \"windows\" (Rust's std::env::consts::OS values), exact match. On other machines the mapping is inactive. Absent = all."
+        },
+        "host": {
+          "$ref": "#/$defs/MachineMatch",
+          "description": "Hostnames this mapping applies to, matched case-insensitively; `*` may open and/or close a pattern (\"wrk-*\", \"*.local\"). On other machines the mapping is inactive. Absent = all."
         }
       }
     }

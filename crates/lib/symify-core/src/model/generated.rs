@@ -208,6 +208,42 @@ impl ::std::convert::From<bool> for LinkValue {
         Self::Boolean(value)
     }
 }
+#[doc = "A machine condition: one pattern or a list of alternatives. A pattern matches case-insensitively; `*` is allowed at the start and/or end of a host pattern (e.g. \"wrk-*\", \"*.local\"), nowhere else."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"MachineMatch\","]
+#[doc = "  \"description\": \"A machine condition: one pattern or a list of alternatives. A pattern matches case-insensitively; `*` is allowed at the start and/or end of a host pattern (e.g. \\\"wrk-*\\\", \\\"*.local\\\"), nowhere else.\","]
+#[doc = "  \"oneOf\": ["]
+#[doc = "    {"]
+#[doc = "      \"description\": \"A single pattern.\","]
+#[doc = "      \"type\": \"string\""]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"description\": \"Alternatives; the condition matches when any pattern matches.\","]
+#[doc = "      \"type\": \"array\","]
+#[doc = "      \"items\": {"]
+#[doc = "        \"type\": \"string\""]
+#[doc = "      },"]
+#[doc = "      \"minItems\": 1"]
+#[doc = "    }"]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Eq, PartialEq)]
+#[serde(untagged)]
+pub enum MachineMatch {
+    String(::std::string::String),
+    Array(::std::vec::Vec<::std::string::String>),
+}
+impl ::std::convert::From<::std::vec::Vec<::std::string::String>> for MachineMatch {
+    fn from(value: ::std::vec::Vec<::std::string::String>) -> Self {
+        Self::Array(value)
+    }
+}
 #[doc = "A named group of links, with optional per-group overrides."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
@@ -221,6 +257,10 @@ impl ::std::convert::From<bool> for LinkValue {
 #[doc = "    \"conflict\": {"]
 #[doc = "      \"description\": \"Conflict policy for this mapping (overrides settings.conflict).\","]
 #[doc = "      \"$ref\": \"#/$defs/Conflict\""]
+#[doc = "    },"]
+#[doc = "    \"host\": {"]
+#[doc = "      \"description\": \"Hostnames this mapping applies to, matched case-insensitively; `*` may open and/or close a pattern (\\\"wrk-*\\\", \\\"*.local\\\"). On other machines the mapping is inactive. Absent = all.\","]
+#[doc = "      \"$ref\": \"#/$defs/MachineMatch\""]
 #[doc = "    },"]
 #[doc = "    \"links\": {"]
 #[doc = "      \"description\": \"Map of live-relative (or absolute) key -> link value.\","]
@@ -237,6 +277,10 @@ impl ::std::convert::From<bool> for LinkValue {
 #[doc = "      \"description\": \"Link mechanism for this mapping (overrides settings.mode).\","]
 #[doc = "      \"$ref\": \"#/$defs/Mode\""]
 #[doc = "    },"]
+#[doc = "    \"os\": {"]
+#[doc = "      \"description\": \"Operating systems this mapping applies to: \\\"linux\\\", \\\"macos\\\" or \\\"windows\\\" (Rust's std::env::consts::OS values), exact match. On other machines the mapping is inactive. Absent = all.\","]
+#[doc = "      \"$ref\": \"#/$defs/MachineMatch\""]
+#[doc = "    },"]
 #[doc = "    \"store\": {"]
 #[doc = "      \"description\": \"Backing repository for this mapping (overrides settings.store).\","]
 #[doc = "      \"type\": \"string\""]
@@ -252,6 +296,9 @@ pub struct Mapping {
     #[doc = "Conflict policy for this mapping (overrides settings.conflict)."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub conflict: ::std::option::Option<Conflict>,
+    #[doc = "Hostnames this mapping applies to, matched case-insensitively; `*` may open and/or close a pattern (\"wrk-*\", \"*.local\"). On other machines the mapping is inactive. Absent = all."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub host: ::std::option::Option<MachineMatch>,
     #[doc = "Map of live-relative (or absolute) key -> link value."]
     #[serde(
         default,
@@ -264,6 +311,9 @@ pub struct Mapping {
     #[doc = "Link mechanism for this mapping (overrides settings.mode)."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub mode: ::std::option::Option<Mode>,
+    #[doc = "Operating systems this mapping applies to: \"linux\", \"macos\" or \"windows\" (Rust's std::env::consts::OS values), exact match. On other machines the mapping is inactive. Absent = all."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub os: ::std::option::Option<MachineMatch>,
     #[doc = "Backing repository for this mapping (overrides settings.store)."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub store: ::std::option::Option<::std::string::String>,
@@ -272,9 +322,11 @@ impl ::std::default::Default for Mapping {
     fn default() -> Self {
         Self {
             conflict: Default::default(),
+            host: Default::default(),
             links: Default::default(),
             live: Default::default(),
             mode: Default::default(),
+            os: Default::default(),
             store: Default::default(),
         }
     }

@@ -27,7 +27,8 @@ mode = "symlink"      # symlink | copy
 conflict = "backup"   # skip | replace | backup
 
 [mappings.dotfiles]
-# optional per-mapping overrides of live / store / mode / conflict
+# optional per-mapping overrides of live / store / mode / conflict,
+# and optional os / host machine conditions
 
 [mappings.dotfiles.links]
 # entries: key = value, resolved per architecture's link-resolution rules
@@ -37,6 +38,23 @@ conflict = "backup"   # skip | replace | backup
 `store`, `mode`, and `conflict`. Paths support `~` and environment-variable
 expansion (Windows-aware) and are normalised to absolute paths before
 planning.
+
+# Machine conditions (`os` / `host`)
+
+A mapping may carry `os` and/or `host` (each a string or non-empty list). At
+resolve time they are matched against an injected `MachineContext` (the
+binary fills it from `std::env::consts::OS` plus `gethostname(2)` on Unix or
+`GetComputerNameExW`'s DNS hostname on Windows — not the 15-character
+NetBIOS `COMPUTERNAME`; tests pin it). A non-matching mapping is **inactive**: the planner and `status` skip
+it entirely and the binary renders a one-line note — see
+[api-contracts](api-contracts.md) for the verb behaviour.
+
+- `os`: matched against `linux` | `macos` | `windows`, case-insensitively; no
+  globs. An unknown value is legal and never matches.
+- `host`: matched case-insensitively against the hostname; `*` may open
+  and/or close a pattern (`wrk-*`, `*.corp`), never sit mid-pattern.
+- Both present ⇒ AND. A mid-pattern `*`, an empty list, or an empty pattern
+  is a config error.
 
 # Loading and merge order
 

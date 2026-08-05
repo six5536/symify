@@ -50,6 +50,7 @@ impl Fx {
                     .iter()
                     .map(|(k, v)| (k.to_string(), v.clone()))
                     .collect(),
+                inactive: None,
             }],
         }
     }

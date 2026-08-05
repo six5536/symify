@@ -62,6 +62,13 @@ Bare `symify` (no command) prints help and exits 0.
 - `-m, --mapping` — repeatable filter on the run/query verbs (omit = all); a
   single value on `add`/`remove` defaulting to the sole mapping. Unknown name:
   `add` creates the mapping, every other verb errors.
+- **Inactive mappings** (an `os`/`host` condition not matching this machine —
+  see [configuration](configuration.md)): run/query verbs skip them with a
+  one-line `mapping <name>: inactive (<os|host>)` note and exit 0, even when
+  named with `-m`; `list` marks them; `--json` reports them as
+  `inactive_mappings: [{ mapping, inactive, reason }]` (run/status/diff) or an
+  `inactive` field per mapping (`list`). `add`/`remove` refuse an inactive
+  mapping — their adopt/restore half cannot act on this machine.
 - `-c, --config <file>` — the repeatable config set; replaces default
   discovery and suppresses auto-init.
 - `--dry-run` — `sync`/`deploy`/`add`/`remove`; plan/report without mutating.

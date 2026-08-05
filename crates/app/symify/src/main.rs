@@ -15,7 +15,7 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser};
 use symify_core::clock::SystemClock;
-use symify_core::config::{ResolvedConfig, ResolvedMapping};
+use symify_core::config::{MachineContext, ResolvedConfig, ResolvedMapping};
 use symify_core::model::{LinkValue, Mode};
 use symify_core::{
     Action, Error, FsOp, RunOptions, Verb, config, edit, entry_paths, execute, fs, plan, status,
@@ -150,6 +150,39 @@ fn is_root() -> bool {
     false
 }
 
+/// The machine identity `os`/`host` mapping conditions are matched against.
+fn machine_context() -> MachineContext {
+    MachineContext::with_host(hostname())
+}
+
+/// The system hostname. Like `geteuid` above, POSIX `gethostname(2)` is
+/// declared directly rather than through a `libc` dependency. An unlikely
+/// failure yields an empty hostname, which no non-empty pattern matches.
+/// Excluded from coverage: the failure path can't be driven from a test.
+#[cfg(unix)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn hostname() -> String {
+    unsafe extern "C" {
+        fn gethostname(name: *mut core::ffi::c_char, len: usize) -> core::ffi::c_int;
+    }
+    // 255 bytes is the practical POSIX ceiling (HOST_NAME_MAX); the +1 keeps
+    // the result NUL-terminated even when the name fills the limit.
+    let mut buf = [0u8; 256];
+    if unsafe { gethostname(buf.as_mut_ptr().cast(), buf.len()) } != 0 {
+        return String::new();
+    }
+    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    String::from_utf8_lossy(&buf[..len]).into_owned()
+}
+
+/// Off Unix, the environment carries the machine name (`COMPUTERNAME` on
+/// Windows); empty when unset, which no non-empty pattern matches.
+#[cfg(not(unix))]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn hostname() -> String {
+    std::env::var("COMPUTERNAME").unwrap_or_default()
+}
+
 /// Discover (auto-initing a default config if needed), then load + resolve.
 /// Returns the config file set and the resolved config.
 fn load_set(config: &[PathBuf]) -> symify_core::Result<(Vec<PathBuf>, ResolvedConfig)> {
@@ -158,7 +191,7 @@ fn load_set(config: &[PathBuf]) -> symify_core::Result<(Vec<PathBuf>, ResolvedCo
         // To stderr so it never pollutes `--json` output on stdout.
         eprintln!("Created {} (defaults).", created.display());
     }
-    let resolved = config::resolve(config::load(&discovered.paths)?)?;
+    let resolved = config::resolve(config::load(&discovered.paths)?, &machine_context())?;
     Ok((discovered.paths, resolved))
 }
 
@@ -181,6 +214,7 @@ fn run_verb(verb: Verb, args: RunArgs) -> symify_core::Result<u8> {
         args.dry_run,
         &planned,
         &outcomes,
+        &output::inactive_notes(&cfg),
         args.json,
     )
     .map_err(stdout_err)
@@ -193,8 +227,13 @@ fn run_status(args: QueryArgs) -> symify_core::Result<u8> {
         checksum: args.checksum,
         modify_window: args.modify_window,
     };
-    output::render_status(&mut io::stdout().lock(), &status(&cfg, opts)?, args.json)
-        .map_err(stdout_err)
+    output::render_status(
+        &mut io::stdout().lock(),
+        &status(&cfg, opts)?,
+        &output::inactive_notes(&cfg),
+        args.json,
+    )
+    .map_err(stdout_err)
 }
 
 fn run_list(args: ListArgs) -> symify_core::Result<u8> {
@@ -215,6 +254,7 @@ fn run_add(args: AddArgs) -> symify_core::Result<u8> {
         Some(n) => n.clone(),
         None => sole_mapping(&resolved)?,
     };
+    refuse_inactive(&resolved, &mapping_name)?;
 
     // The mapping's live root (existing mapping, or [settings] for a new one).
     let live = match resolved.mappings.iter().find(|m| m.name == mapping_name) {
@@ -250,7 +290,7 @@ fn run_add(args: AddArgs) -> symify_core::Result<u8> {
         .or_default()
         .links
         .insert(key.clone(), value.clone());
-    let resolved2 = config::resolve(raw2)?;
+    let resolved2 = config::resolve(raw2, &machine_context())?;
     let m2 = resolved2
         .mappings
         .iter()
@@ -325,6 +365,7 @@ fn run_remove(args: RemoveArgs) -> symify_core::Result<u8> {
         .iter()
         .find(|m| m.name == mapping_name)
         .ok_or_else(|| Error::config(format!("unknown mapping `{mapping_name}`")))?;
+    refuse_inactive(&resolved, &mapping_name)?;
 
     let abs = config::expand_root(&args.path.to_string_lossy())?;
     let key = derive_key(&abs, &m.live);
@@ -366,6 +407,24 @@ fn run_remove(args: RemoveArgs) -> symify_core::Result<u8> {
 }
 
 // ----- helpers -----------------------------------------------------------
+
+/// `add`/`remove` refuse an inactive mapping: their adopt/restore half cannot
+/// act on this machine. Cross-machine config maintenance is a hand edit.
+fn refuse_inactive(resolved: &ResolvedConfig, name: &str) -> symify_core::Result<()> {
+    let inactive = resolved
+        .mappings
+        .iter()
+        .find(|m| m.name == name)
+        .and_then(|m| m.inactive);
+    match inactive {
+        Some(reason) => Err(Error::config(format!(
+            "mapping `{name}` is inactive on this machine (its `{}` condition \
+             does not match); edit the config file directly to change it",
+            reason.key()
+        ))),
+        None => Ok(()),
+    }
+}
 
 fn sole_mapping(resolved: &ResolvedConfig) -> symify_core::Result<String> {
     match resolved.mappings.as_slice() {
@@ -538,6 +597,7 @@ mod tests {
             mode: Mode::Symlink,
             conflict: Conflict::Backup,
             links: vec![],
+            inactive: None,
         }
     }
 

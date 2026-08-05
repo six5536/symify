@@ -43,6 +43,9 @@ Terms as used throughout the project; mechanics in
   joined under the store root.
 - **disabled entry** — an entry whose value is `false`; counted as `ok` in
   summaries.
+- **inactive mapping** — a mapping whose `os`/`host` condition does not match
+  this machine; skipped from planning and reported as a one-line note, never
+  per entry.
 - **conflict** — both sides exist and the entry is not in its desired state;
   resolved by the `skip` | `replace` | `backup` policy.
 - **backup** — the `<name>.<timestamp>.bak` rename protecting whichever side

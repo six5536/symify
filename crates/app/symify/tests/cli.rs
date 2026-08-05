@@ -672,3 +672,102 @@ fn sync_skip_partial_apply_reports_drift_exit_1() {
     );
 }
 
+// ----- per-machine mappings (os / host) ---------------------------------
+
+/// A config with the active `dotfiles` mapping (os-gated to every CI OS) plus
+/// an `other` mapping host-gated to a hostname that cannot exist here.
+fn machine_fx() -> Fx {
+    Fx::with_body(
+        concat!(
+            "[mappings.dotfiles]\n",
+            "os = [\"linux\", \"macos\", \"windows\"]\n",
+            "[mappings.dotfiles.links]\n",
+            "\"a\" = true\n\n",
+            "[mappings.other]\n",
+            "host = \"no-such-host.invalid\"\n",
+            "[mappings.other.links]\n",
+            "\"b\" = true\n"
+        ),
+        "backup",
+    )
+}
+
+#[test]
+fn inactive_mapping_is_noted_and_skipped() {
+    let fx = machine_fx();
+    fx.write(&fx.lp("a"), b"x");
+    fx.write(&fx.lp("b"), b"y");
+
+    // The active mapping applies; the inactive one is a note, not entries, and
+    // the mixed run still exits 0.
+    let out = fx.cmd("sync").assert().success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains("mapping other: inactive (host)"),
+        "got: {stdout}"
+    );
+    assert!(is_symlink(&fx.lp("a")), "active mapping must still adopt");
+    assert!(
+        !is_symlink(&fx.lp("b")) && fx.lp("b").exists(),
+        "inactive mapping must not be touched"
+    );
+
+    // status --json: entries only for the active mapping; the inactive one is
+    // a {mapping, inactive, reason} object.
+    let out = fx.cmd("status").arg("--json").assert().success();
+    let doc: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert!(
+        doc["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["mapping"] == "dotfiles"),
+        "got: {doc}"
+    );
+    assert_eq!(
+        doc["inactive_mappings"],
+        serde_json::json!([{ "mapping": "other", "inactive": true, "reason": "host" }]),
+    );
+
+    // Explicitly selecting the inactive mapping is a clean no-op with the note.
+    let out = fx.cmd("status").arg("-m").arg("other").assert().success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains("mapping other: inactive (host)"),
+        "got: {stdout}"
+    );
+
+    // list marks the inactive mapping.
+    let out = fx.cmd("list").assert().success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(stdout.contains("inactive (host)"), "got: {stdout}");
+}
+
+#[test]
+fn add_and_remove_refuse_an_inactive_mapping() {
+    let fx = machine_fx();
+    fx.write(&fx.lp("c"), b"z");
+
+    let out = fx
+        .cmd("add")
+        .arg(fx.lp("c"))
+        .args(["-m", "other"])
+        .assert()
+        .code(2);
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("inactive on this machine") && stderr.contains("`host`"),
+        "got: {stderr}"
+    );
+    assert!(
+        !fx.config_text().contains("\"c\""),
+        "refused add must not edit the config"
+    );
+
+    fx.cmd("remove")
+        .arg(fx.lp("b"))
+        .args(["-m", "other"])
+        .assert()
+        .code(2);
+}
+

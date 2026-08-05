@@ -66,13 +66,19 @@ pub struct StatusEntry {
 ///
 /// ```no_run
 /// use symify_core::{config, RunOptions};
-/// let resolved = config::load_config(&[])?;
+/// let machine = config::MachineContext::with_host("wrk-01");
+/// let resolved = config::load_config(&[], &machine)?;
 /// let entries = symify_core::status::status(&resolved, RunOptions::default())?;
 /// # Ok::<(), symify_core::Error>(())
 /// ```
 pub fn status(config: &ResolvedConfig, opts: RunOptions) -> Result<Vec<StatusEntry>> {
     let mut out = Vec::new();
     for m in &config.mappings {
+        // Inactive mappings (os/host mismatch) report nothing per entry; the
+        // binary renders them as a one-line note.
+        if m.inactive.is_some() {
+            continue;
+        }
         for (key, value) in &m.links {
             let kind = value.kind();
             let (live, store) = crate::plan::resolve_paths(m, key, kind);
@@ -171,6 +177,7 @@ mod tests {
                     mode,
                     conflict: Conflict::Backup,
                     links: links.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+                    inactive: None,
                 }],
             }
         }

@@ -44,6 +44,39 @@ fn action_word(kind: ActionKind) -> &'static str {
     }
 }
 
+// ----- inactive mappings ------------------------------------------------
+
+/// A mapping skipped because its `os`/`host` condition does not match this
+/// machine. Rendered as one line (or one JSON object), never per entry.
+#[derive(Serialize)]
+pub struct InactiveNote {
+    mapping: String,
+    inactive: bool,
+    reason: &'static str,
+}
+
+/// The inactive mappings of a resolved config, ready to render.
+pub fn inactive_notes(config: &ResolvedConfig) -> Vec<InactiveNote> {
+    config
+        .mappings
+        .iter()
+        .filter_map(|m| {
+            m.inactive.map(|r| InactiveNote {
+                mapping: m.name.clone(),
+                inactive: true,
+                reason: r.key(),
+            })
+        })
+        .collect()
+}
+
+fn print_inactive<W: Write>(w: &mut W, notes: &[InactiveNote]) -> io::Result<()> {
+    for n in notes {
+        writeln!(w, "mapping {}: inactive ({})", n.mapping, n.reason)?;
+    }
+    Ok(())
+}
+
 // ----- run (sync / deploy) ----------------------------------------------
 
 #[derive(Serialize)]
@@ -51,6 +84,8 @@ struct RunJson<'a> {
     verb: &'a str,
     dry_run: bool,
     entries: Vec<RunEntryJson>,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    inactive_mappings: &'a [InactiveNote],
     summary: RunSummary,
 }
 
@@ -93,6 +128,7 @@ pub fn render_run<W: Write>(
     dry_run: bool,
     planned: &[Planned],
     outcomes: &[Outcome],
+    inactive: &[InactiveNote],
     json: bool,
 ) -> io::Result<u8> {
     let mut summary = RunSummary::default();
@@ -130,6 +166,7 @@ pub fn render_run<W: Write>(
             verb: verb_str(verb),
             dry_run,
             entries,
+            inactive_mappings: inactive,
             summary,
         };
         writeln!(w, "{}", serde_json::to_string_pretty(&doc).unwrap())?;
@@ -140,6 +177,7 @@ pub fn render_run<W: Write>(
         for e in &entries {
             print_line(w, e)?;
         }
+        print_inactive(w, inactive)?;
         print_run_summary(w, verb, dry_run, &summary)?;
     }
 
@@ -290,8 +328,10 @@ fn print_run_summary<W: Write>(
 // ----- status -----------------------------------------------------------
 
 #[derive(Serialize)]
-struct StatusJson {
+struct StatusJson<'a> {
     entries: Vec<StatusEntryJson>,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    inactive_mappings: &'a [InactiveNote],
     summary: StatusSummary,
 }
 
@@ -329,7 +369,12 @@ fn status_str(label: &StatusLabel) -> &'static str {
 }
 
 /// Render `status` results; returns the process exit code.
-pub fn render_status<W: Write>(w: &mut W, entries: &[StatusEntry], json: bool) -> io::Result<u8> {
+pub fn render_status<W: Write>(
+    w: &mut W,
+    entries: &[StatusEntry],
+    inactive: &[InactiveNote],
+    json: bool,
+) -> io::Result<u8> {
     let mut summary = StatusSummary::default();
     let mut out = Vec::with_capacity(entries.len());
 
@@ -361,6 +406,7 @@ pub fn render_status<W: Write>(w: &mut W, entries: &[StatusEntry], json: bool) -
     if json {
         let doc = StatusJson {
             entries: out,
+            inactive_mappings: inactive,
             summary,
         };
         writeln!(w, "{}", serde_json::to_string_pretty(&doc).unwrap())?;
@@ -372,6 +418,7 @@ pub fn render_status<W: Write>(w: &mut W, entries: &[StatusEntry], json: bool) -
             };
             writeln!(w, "  {:<13} {}/{}{}", e.status, e.mapping, e.key, detail)?;
         }
+        print_inactive(w, inactive)?;
         writeln!(
             w,
             "\nstatus: {} ok, {} drift, {} failed",
@@ -528,6 +575,9 @@ struct ListMappingJson {
     store: String,
     mode: &'static str,
     conflict: &'static str,
+    /// The unmatched condition (`os`/`host`) when the mapping is inactive here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    inactive: Option<&'static str>,
     entries: Vec<ListEntryJson>,
 }
 
@@ -564,6 +614,7 @@ pub fn render_list<W: Write>(
                 store: m.store.display().to_string(),
                 mode: mode_str(m.mode),
                 conflict: conflict_str(m.conflict),
+                inactive: m.inactive.map(|r| r.key()),
                 entries: m
                     .links
                     .iter()
@@ -591,15 +642,20 @@ pub fn render_list<W: Write>(
         return Ok(EXIT_OK);
     }
     for m in &config.mappings {
+        let inactive = match m.inactive {
+            Some(r) => format!("  inactive ({})", r.key()),
+            None => String::new(),
+        };
         writeln!(
             w,
-            "{}  {} → {}  {}  {}  ({} entries)",
+            "{}  {} → {}  {}  {}  ({} entries){}",
             m.name,
             m.live.display(),
             m.store.display(),
             mode_str(m.mode),
             conflict_str(m.conflict),
-            m.links.len()
+            m.links.len(),
+            inactive
         )?;
         if entries {
             for (k, v) in &m.links {
@@ -721,7 +777,7 @@ mod tests {
     fn render_to_string(json: bool, dry_run: bool) -> (String, u8) {
         let (p, o) = run_fixture();
         let mut buf = Vec::new();
-        let code = render_run(&mut buf, Verb::Sync, dry_run, &p, &o, json).unwrap();
+        let code = render_run(&mut buf, Verb::Sync, dry_run, &p, &o, &[], json).unwrap();
         (String::from_utf8(buf).unwrap(), code)
     }
 
@@ -784,7 +840,7 @@ mod tests {
         let p = vec![planned("x", Mode::Copy, Action::Failed("nope".into()))];
         let o = vec![Outcome::Failed("nope".into())];
         let mut buf = Vec::new();
-        let code = render_run(&mut buf, Verb::Deploy, false, &p, &o, true).unwrap();
+        let code = render_run(&mut buf, Verb::Deploy, false, &p, &o, &[], true).unwrap();
         assert_eq!(code, EXIT_FAILURE);
         let v: Value = serde_json::from_str(&String::from_utf8(buf).unwrap()).unwrap();
         assert_eq!(v["verb"], "deploy");
@@ -822,7 +878,7 @@ mod tests {
     #[test]
     fn status_human_every_label() {
         let mut buf = Vec::new();
-        let code = render_status(&mut buf, &status_fixture(), false).unwrap();
+        let code = render_status(&mut buf, &status_fixture(), &[], false).unwrap();
         // Has drift and a failure -> failure code wins.
         assert_eq!(code, EXIT_FAILURE);
         insta::assert_snapshot!("status_human_every_label", String::from_utf8(buf).unwrap());
@@ -831,7 +887,7 @@ mod tests {
     #[test]
     fn status_json_summary_and_detail() {
         let mut buf = Vec::new();
-        render_status(&mut buf, &status_fixture(), true).unwrap();
+        render_status(&mut buf, &status_fixture(), &[], true).unwrap();
         let v: Value = serde_json::from_str(&String::from_utf8(buf).unwrap()).unwrap();
         let sum = &v["summary"];
         // Ok + Disabled are clean (2); failed (1); the rest are drift (6).
@@ -859,7 +915,7 @@ mod tests {
             label: StatusLabel::Ok,
         }];
         let mut buf = Vec::new();
-        let code = render_status(&mut buf, &entries, false).unwrap();
+        let code = render_status(&mut buf, &entries, &[], false).unwrap();
         assert_eq!(code, EXIT_OK);
     }
 
@@ -877,6 +933,7 @@ mod tests {
                     (".bashrc".into(), LinkValue::Boolean(true)),
                     (".vimrc".into(), LinkValue::String("vim/vimrc".into())),
                 ],
+                inactive: None,
             }],
         }
     }

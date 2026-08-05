@@ -11,6 +11,14 @@ publish a version it cannot find a heading for.
 
 ## [Unreleased]
 
+### Added
+
+- Per-machine mappings: `os` and `host` keys on `[mappings.<name>]` (string
+  or list; hostnames match case-insensitively with `*` allowed at a pattern's
+  ends). A non-matching mapping is inactive: runs skip it with a one-line
+  note and exit 0, `list` marks it, `--json` reports it under
+  `inactive_mappings`, and `add`/`remove` refuse it.
+
 ### Changed
 
 - **Breaking:** the `sync` mode is renamed to `copy`, ending the name

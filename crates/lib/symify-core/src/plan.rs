@@ -149,13 +149,19 @@ pub struct Planned {
 ///
 /// ```no_run
 /// use symify_core::{config, plan, RunOptions, Verb};
-/// let resolved = config::load_config(&[])?;
+/// let machine = config::MachineContext::with_host("wrk-01");
+/// let resolved = config::load_config(&[], &machine)?;
 /// let planned = plan::plan(&resolved, Verb::Deploy, RunOptions::default())?;
 /// # Ok::<(), symify_core::Error>(())
 /// ```
 pub fn plan(config: &ResolvedConfig, verb: Verb, opts: RunOptions) -> Result<Vec<Planned>> {
     let mut out = Vec::new();
     for mapping in &config.mappings {
+        // An inactive mapping (os/host mismatch) plans nothing; the binary
+        // reports it as a one-line note instead of per-entry rows.
+        if mapping.inactive.is_some() {
+            continue;
+        }
         for (key, value) in &mapping.links {
             out.push(plan_entry(mapping, key, value, verb, opts)?);
         }
@@ -203,7 +209,8 @@ impl Outcome {
 /// ```no_run
 /// use symify_core::{config, plan, RunOptions, Verb};
 /// use symify_core::clock::SystemClock;
-/// let resolved = config::load_config(&[])?;
+/// let machine = config::MachineContext::with_host("wrk-01");
+/// let resolved = config::load_config(&[], &machine)?;
 /// let planned = plan::plan(&resolved, Verb::Sync, RunOptions::default())?;
 /// let outcomes = plan::execute(&planned, &SystemClock, false);
 /// # Ok::<(), symify_core::Error>(())
@@ -625,6 +632,7 @@ mod tests {
                     mode,
                     conflict,
                     links: links.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+                    inactive: None,
                 }],
             }
         }
@@ -1222,6 +1230,7 @@ mod tests {
                 mode: Mode::Symlink,
                 conflict: Conflict::Backup,
                 links: vec![("sub".to_string(), t())],
+                inactive: None,
             }],
         };
         assert!(matches!(act(&cfg, Verb::Sync), Action::Failed(_)));

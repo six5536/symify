@@ -9,8 +9,50 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
-use crate::model::{Config, Conflict, LinkValue, Mapping, Mode, Settings};
+use crate::model::{Config, Conflict, LinkValue, MachineMatch, Mapping, Mode, Settings};
 use crate::model::{DEFAULT_CONFLICT, DEFAULT_MODE};
+
+/// The machine identity mappings' `os`/`host` conditions are matched against.
+/// Plain data, injected like the clock: the binary fills it from the OS, tests
+/// pin it, and `symify-core` never reads the environment itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MachineContext {
+    /// The running OS, as `std::env::consts::OS` spells it (`linux`, `macos`,
+    /// `windows`).
+    pub os: String,
+    /// The machine's hostname, as reported by the system (undoctored).
+    pub host: String,
+}
+
+impl MachineContext {
+    /// Context with the current OS and the given hostname. The hostname read
+    /// is a syscall and lives in the binary, not here.
+    pub fn with_host(host: impl Into<String>) -> Self {
+        Self {
+            os: std::env::consts::OS.to_string(),
+            host: host.into(),
+        }
+    }
+}
+
+/// Why a mapping is inactive on this machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InactiveReason {
+    /// The `os` condition did not match.
+    Os,
+    /// The `host` condition did not match.
+    Host,
+}
+
+impl InactiveReason {
+    /// The config key that failed to match, for messages.
+    pub fn key(self) -> &'static str {
+        match self {
+            InactiveReason::Os => "os",
+            InactiveReason::Host => "host",
+        }
+    }
+}
 
 /// A fully resolved configuration: every mapping has concrete absolute roots and
 /// effective `mode`/`conflict`, ready for planning.
@@ -35,6 +77,9 @@ pub struct ResolvedMapping {
     pub conflict: Conflict,
     /// Link entries, sorted by key for deterministic output.
     pub links: Vec<(String, LinkValue)>,
+    /// Set when the mapping's `os`/`host` condition did not match this machine.
+    /// An inactive mapping is excluded from planning and status.
+    pub inactive: Option<InactiveReason>,
 }
 
 /// Decide which config files to load.
@@ -90,10 +135,10 @@ pub fn load(paths: &[PathBuf]) -> Result<Config> {
 }
 
 /// Discover, load, and resolve in one call.
-pub fn load_config(cli_configs: &[PathBuf]) -> Result<ResolvedConfig> {
+pub fn load_config(cli_configs: &[PathBuf], machine: &MachineContext) -> Result<ResolvedConfig> {
     let paths = discover(cli_configs)?;
     let config = load(&paths)?;
-    resolve(config)
+    resolve(config, machine)
 }
 
 /// Result of [`ensure_config`]: the config files to use, and the path of any
@@ -258,6 +303,8 @@ fn merge_mapping(base: Mapping, overlay: Mapping) -> Mapping {
         store: overlay.store.or(base.store),
         mode: overlay.mode.or(base.mode),
         conflict: overlay.conflict.or(base.conflict),
+        os: overlay.os.or(base.os),
+        host: overlay.host.or(base.host),
         links,
     }
 }
@@ -265,14 +312,16 @@ fn merge_mapping(base: Mapping, overlay: Mapping) -> Mapping {
 // ----- resolve -----------------------------------------------------------
 
 /// Apply `[settings]` defaults to each mapping, expand `~`/env in roots, make
-/// them absolute, and sort for determinism.
+/// them absolute, evaluate `os`/`host` conditions against `machine`, and sort
+/// for determinism.
 ///
 /// ```no_run
-/// use symify_core::config;
-/// let resolved = config::resolve(config::load(&[])?)?;
+/// use symify_core::config::{self, MachineContext};
+/// let machine = MachineContext::with_host("wrk-01");
+/// let resolved = config::resolve(config::load(&[])?, &machine)?;
 /// # Ok::<(), symify_core::Error>(())
 /// ```
-pub fn resolve(config: Config) -> Result<ResolvedConfig> {
+pub fn resolve(config: Config, machine: &MachineContext) -> Result<ResolvedConfig> {
     let settings = config.settings.unwrap_or_default();
     let home = home_dir().ok();
 
@@ -310,6 +359,8 @@ pub fn resolve(config: Config) -> Result<ResolvedConfig> {
             )));
         }
 
+        let inactive = machine_mismatch(&name, m, machine)?;
+
         mappings.push(ResolvedMapping {
             name,
             live,
@@ -317,10 +368,93 @@ pub fn resolve(config: Config) -> Result<ResolvedConfig> {
             mode,
             conflict,
             links,
+            inactive,
         });
     }
 
     Ok(ResolvedConfig { mappings })
+}
+
+/// Evaluate a mapping's `os`/`host` conditions against the machine. `None`
+/// means active; both conditions must match when both are present.
+fn machine_mismatch(
+    name: &str,
+    m: &Mapping,
+    machine: &MachineContext,
+) -> Result<Option<InactiveReason>> {
+    if let Some(cond) = &m.os
+        && !condition_matches(name, "os", cond, &machine.os, false)?
+    {
+        return Ok(Some(InactiveReason::Os));
+    }
+    if let Some(cond) = &m.host
+        && !condition_matches(name, "host", cond, &machine.host, true)?
+    {
+        return Ok(Some(InactiveReason::Host));
+    }
+    Ok(None)
+}
+
+/// Whether any pattern in the condition matches `value`. `glob` enables the
+/// edge-`*` forms (host patterns); `os` values are matched exactly.
+fn condition_matches(
+    name: &str,
+    field: &str,
+    cond: &MachineMatch,
+    value: &str,
+    glob: bool,
+) -> Result<bool> {
+    let patterns: Vec<&str> = match cond {
+        MachineMatch::String(s) => vec![s.as_str()],
+        MachineMatch::Array(items) => items.iter().map(String::as_str).collect(),
+    };
+    if patterns.is_empty() {
+        return Err(Error::config(format!(
+            "mapping `{name}`: `{field}` must not be an empty list"
+        )));
+    }
+    // Validate every pattern before matching any, so a bad pattern is a config
+    // error on every machine — not only on the machines where no earlier
+    // pattern happens to match.
+    for pattern in &patterns {
+        if pattern.is_empty() {
+            return Err(Error::config(format!(
+                "mapping `{name}`: `{field}` contains an empty pattern"
+            )));
+        }
+        if !glob && pattern.contains('*') {
+            return Err(Error::config(format!(
+                "mapping `{name}`: `{field}` does not support `*` patterns"
+            )));
+        }
+        if glob && pattern.trim_matches('*').contains('*') {
+            return Err(Error::config(format!(
+                "mapping `{name}`: `{field}` pattern `{pattern}` has `*` in the \
+                 middle; `*` may only open or close a pattern"
+            )));
+        }
+    }
+    Ok(patterns.iter().any(|p| pattern_matches(p, value, glob)))
+}
+
+/// Case-insensitive match of one pattern. With `glob`, `*` at the pattern's
+/// edges matches any (possibly empty) run of characters.
+fn pattern_matches(pattern: &str, value: &str, glob: bool) -> bool {
+    let value = value.to_ascii_lowercase();
+    let pattern = pattern.to_ascii_lowercase();
+    if !glob {
+        return pattern == value;
+    }
+    let open = pattern.starts_with('*');
+    let close = pattern.ends_with('*');
+    let core = pattern.trim_matches('*');
+    match (open, close) {
+        (false, false) => value == core,
+        (true, false) => value.ends_with(core),
+        (false, true) => value.starts_with(core),
+        // `*core*`: substring. `**` has an empty core and matches anything.
+        (true, true) => value.contains(core),
+    }
 }
 
 fn pick_root(
@@ -411,6 +545,19 @@ mod tests {
         toml::from_str(s).expect("valid toml")
     }
 
+    /// A pinned machine identity so condition tests are host-independent.
+    fn tm() -> MachineContext {
+        MachineContext {
+            os: "linux".into(),
+            host: "wrk-01.example".into(),
+        }
+    }
+
+    /// [`resolve`] under the pinned test machine.
+    fn resolve_t(c: Config) -> Result<ResolvedConfig> {
+        resolve(c, &tm())
+    }
+
     fn merge_all(docs: &[&str]) -> Config {
         docs.iter()
             .fold(Config::default(), |acc, d| merge(acc, cfg(d)))
@@ -495,7 +642,7 @@ mod tests {
             store = "/store"
             [mappings.a.links]
             ".bashrc" = true"#);
-        let r = resolve(c).unwrap();
+        let r = resolve_t(c).unwrap();
         assert_eq!(r.mappings.len(), 1);
         assert_eq!(r.mappings[0].mode, DEFAULT_MODE);
         assert_eq!(r.mappings[0].conflict, DEFAULT_CONFLICT);
@@ -511,7 +658,7 @@ mod tests {
             mode = "symlink"
             [mappings.a.links]
             x = true"#);
-        let r = resolve(c).unwrap();
+        let r = resolve_t(c).unwrap();
         assert_eq!(r.mappings[0].live, PathBuf::from("/live")); // from settings
         assert_eq!(r.mappings[0].mode, Mode::Symlink); // mapping wins over settings
     }
@@ -522,7 +669,7 @@ mod tests {
             live = "/live"
             [mappings.a.links]
             x = true"#);
-        let err = resolve(c).unwrap_err();
+        let err = resolve_t(c).unwrap_err();
         assert!(matches!(err, Error::Config(_)));
         assert!(err.to_string().contains("store"));
     }
@@ -534,7 +681,7 @@ mod tests {
             store = "/same"
             [mappings.a.links]
             x = true"#);
-        let err = resolve(c).unwrap_err();
+        let err = resolve_t(c).unwrap_err();
         assert!(matches!(err, Error::Config(_)));
         assert!(err.to_string().contains("same directory"));
     }
@@ -549,7 +696,7 @@ mod tests {
             a = true
             [mappings.alpha.links]
             x = true"#);
-        let r = resolve(c).unwrap();
+        let r = resolve_t(c).unwrap();
         assert_eq!(r.mappings[0].name, "alpha");
         assert_eq!(r.mappings[1].name, "zeta");
         let keys: Vec<&str> = r.mappings[1]
@@ -629,7 +776,7 @@ mod tests {
 
     #[test]
     fn select_keeps_named_mappings_and_errors_on_unknown() {
-        let cfg = resolve(cfg(r#"[settings]
+        let cfg = resolve_t(cfg(r#"[settings]
             live = "/l"
             store = "/s"
             [mappings.a.links]
@@ -665,7 +812,7 @@ mod tests {
         assert_eq!(first.created.as_deref(), Some(expected.as_path()));
         assert!(expected.is_file());
         // the auto-created config is valid and resolves
-        resolve(load(&first.paths).unwrap()).unwrap();
+        resolve_t(load(&first.paths).unwrap()).unwrap();
 
         // second call finds it; nothing created
         let second = ensure_config(&[]).unwrap();
@@ -709,6 +856,91 @@ mod tests {
         assert!(err.to_string().contains("bad.toml"), "got: {err}");
     }
 
+    // ---- os / host machine conditions ----
+
+    /// Resolve one mapping with the given `os`/`host` condition lines under the
+    /// pinned test machine (`linux`, host `wrk-01.example`).
+    fn resolve_cond(cond: &str) -> Result<ResolvedConfig> {
+        resolve_t(cfg(&format!(
+            "[mappings.m]\nlive = \"/l\"\nstore = \"/s\"\n{cond}\n"
+        )))
+    }
+
+    fn inactive_of(cond: &str) -> Option<InactiveReason> {
+        resolve_cond(cond).unwrap().mappings[0].inactive
+    }
+
+    #[test]
+    fn machine_conditions_match_table() {
+        use InactiveReason::{Host, Os};
+        for (cond, want) in [
+            // Absent conditions: always active.
+            ("", None),
+            // os: exact, case-insensitive, arrays are alternatives.
+            ("os = \"linux\"", None),
+            ("os = \"Linux\"", None),
+            ("os = \"macos\"", Some(Os)),
+            ("os = [\"macos\", \"linux\"]", None),
+            ("os = [\"macos\", \"windows\"]", Some(Os)),
+            // host: exact and edge globs, case-insensitive.
+            ("host = \"wrk-01.example\"", None),
+            ("host = \"WRK-01.EXAMPLE\"", None),
+            ("host = \"wrk-01\"", Some(Host)),
+            ("host = \"wrk-*\"", None),
+            ("host = \"*.example\"", None),
+            ("host = \"*01.ex*\"", None),
+            ("host = [\"laptop\", \"wrk-*\"]", None),
+            ("host = [\"laptop\", \"desk-*\"]", Some(Host)),
+            // Both keys AND together; report the first mismatch.
+            ("os = \"linux\"\nhost = \"wrk-*\"", None),
+            ("os = \"macos\"\nhost = \"wrk-*\"", Some(Os)),
+            ("os = \"linux\"\nhost = \"desk-*\"", Some(Host)),
+        ] {
+            assert_eq!(inactive_of(cond), want, "condition: {cond}");
+        }
+    }
+
+    #[test]
+    fn machine_condition_config_errors() {
+        // Mid-pattern `*`, empty lists, empty patterns, and `*` in `os` are
+        // config errors, not silent mismatches — even when an earlier pattern
+        // in the list already matches this machine (validity must not depend
+        // on which machine reads the config).
+        for cond in [
+            "host = \"wrk-*-01\"",
+            "host = []",
+            "host = [\"\"]",
+            "os = \"lin*\"",
+            "host = [\"wrk-01.example\", \"bad*mid\"]",
+            "os = [\"linux\", \"mac*\"]",
+        ] {
+            assert!(
+                resolve_cond(cond).is_err(),
+                "expected config error for: {cond}"
+            );
+        }
+    }
+
+    #[test]
+    fn conditions_merge_like_other_mapping_keys() {
+        // A later file's condition overrides, and conditions survive a merge
+        // that only adds links.
+        let merged = merge_all(&[
+            "[mappings.m]\nos = \"macos\"\n[mappings.m.links]\n\"a\" = true",
+            "[mappings.m]\nos = \"linux\"",
+        ]);
+        let r = resolve(
+            Config {
+                settings: cfg("[settings]\nlive = \"/l\"\nstore = \"/s\"").settings,
+                mappings: merged.mappings,
+            },
+            &tm(),
+        )
+        .unwrap();
+        assert_eq!(r.mappings[0].inactive, None);
+        assert_eq!(r.mappings[0].links.len(), 1);
+    }
+
     #[test]
     fn unknown_keys_are_rejected() {
         // Current contract: the schema sets `additionalProperties: false`, so the
@@ -733,7 +965,7 @@ mod tests {
         assert!(c.mappings.is_empty());
         // No mappings means nothing needs roots, so resolve succeeds with an
         // empty set rather than erroring.
-        let r = resolve(c).unwrap();
+        let r = resolve_t(c).unwrap();
         assert!(r.mappings.is_empty());
     }
 }
