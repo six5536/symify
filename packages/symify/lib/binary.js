@@ -9,6 +9,7 @@ const PACKAGES = {
   "linux arm64": "@six5536/symify-linux-arm64",
   "darwin x64": "@six5536/symify-darwin-x64",
   "darwin arm64": "@six5536/symify-darwin-arm64",
+  "win32 x64": "@six5536/symify-win32-x64",
 };
 
 const SUPPORTED = Object.keys(PACKAGES)

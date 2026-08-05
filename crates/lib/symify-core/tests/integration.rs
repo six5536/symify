@@ -201,6 +201,8 @@ fn continue_on_error_processes_all_entries() {
     assert_eq!(std::fs::read(fx.sp("f")).unwrap(), b"file");
 }
 
+// Permission bits are Unix semantics; not meaningful on Windows.
+#[cfg(unix)]
 #[test]
 fn sync_copy_mode_preserves_and_tracks_permission_bits() {
     use std::os::unix::fs::PermissionsExt;

@@ -24,7 +24,7 @@ Releases are tag-driven; the authoritative walkthrough is
    before cutting a release. `npm run release` and the release workflow both
    refuse a version with no section; the section becomes the GitHub release
    notes.
-2. **`npm run release X.Y.Z`** sets the version everywhere in lockstep (14
+2. **`npm run release X.Y.Z`** sets the version everywhere in lockstep (16
    locations including both lockfiles), verifies, commits, and tags — it
    never pushes.
 3. **Review, then `git push --follow-tags`.** Pushing the tag triggers the

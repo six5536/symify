@@ -27,8 +27,9 @@ links:
 
 # Constraints
 
-- **Windows is designed-for but unshipped** — a build-target +
-  symlink-privilege task, not a rewrite; detail in
+- **Windows symlink mode needs privilege** (Developer Mode or elevation) and
+  NTFS; without it, symlink entries fail with guidance and `copy` mode is the
+  fallback. x64 only — native arm64 waits until CI can execute it; detail in
   [software-components](software-components.md).
 - **Pre-1.0**: minor versions may carry breaking changes; `symify-core`'s
   API is not stable.
@@ -42,5 +43,6 @@ links:
 - `clean` verb + optional state manifest for orphan removal (currently
   stateless).
 - Stow-style per-file directory folding.
-- Windows binary distribution; relative symlink targets as an opt-in.
+- Native Windows arm64 (blocked on a CI runner that can execute it); relative
+  symlink targets as an opt-in.
 - `--json`-driven richer tooling; npm download/build fallback.

@@ -16,9 +16,10 @@ This package is a thin launcher. It declares a prebuilt binary for each
 supported platform as an `optionalDependency`, and npm installs only the one
 matching your machine; a small JS shim then runs it.
 
-**Supported platforms:** Linux and macOS, `x64` and `arm64`. On any other
-platform (including Windows), or to build from source, use the Rust toolchain
-instead:
+**Supported platforms:** Linux and macOS (`x64` and `arm64`), and Windows
+(`x64`; creating symlinks there needs Developer Mode or elevation — copy mode
+works without either). On any other platform, or to build from source, use
+the Rust toolchain instead:
 
 ```sh
 cargo install symify

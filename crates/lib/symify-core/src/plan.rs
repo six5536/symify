@@ -707,7 +707,23 @@ fn cp(from: &Path, to: &Path) -> FsOp {
 mod tests {
     use super::*;
     use crate::config::{ResolvedConfig, ResolvedMapping};
-    use std::os::unix::fs::symlink;
+    /// Test symlink on any platform: Unix `symlink`, or the target-kind-aware
+    /// Windows call (CI runners execute elevated, so no privilege issues).
+    fn symlink<P: AsRef<Path>, Q: AsRef<Path>>(target: P, link: Q) -> std::io::Result<()> {
+        #[cfg(unix)]
+        return std::os::unix::fs::symlink(target, link);
+        #[cfg(windows)]
+        {
+            let is_dir = std::fs::metadata(target.as_ref())
+                .map(|m| m.is_dir())
+                .unwrap_or(false);
+            if is_dir {
+                std::os::windows::fs::symlink_dir(target, link)
+            } else {
+                std::os::windows::fs::symlink_file(target, link)
+            }
+        }
+    }
     use std::path::PathBuf;
     use tempfile::TempDir;
 

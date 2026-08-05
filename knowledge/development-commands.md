@@ -26,7 +26,7 @@ Everything is wrapped as npm scripts (defined in
   Schema; `codegen:check` fails on drift.
 - Coverage: `npm run coverage` (HTML) / `coverage:summary` /
   `coverage:check` (the ≥90%-per-crate gate; needs the nightly toolchain).
-- Packaging: `npm run test:launcher`, `npm run verify-version` (14 locations
+- Packaging: `npm run test:launcher`, `npm run verify-version` (16 locations
   must agree), `npm run release <version>` (bumps, verifies, commits, tags —
   never pushes).
 
@@ -37,7 +37,7 @@ Two traps:
   warnings`, codegen drift, launcher tests, version consistency, and the
   coverage gate. Before a PR, run the full list in CONTRIBUTING, not the
   dailies.
-- Only the launcher package is an npm workspace. The four platform-binary
+- Only the launcher package is an npm workspace. The five platform-binary
   packages deliberately are not (npm enforces their `os`/`cpu` fields on
   workspace members, breaking `npm install` on every host); tooling addresses
   them by path.

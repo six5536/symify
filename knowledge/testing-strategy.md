@@ -63,6 +63,7 @@ the commands and the coverage gate are in [CONTRIBUTING](/CONTRIBUTING.md).
 
 # CI platforms
 
-Tests run on **Linux and macOS** (the v1 ship targets). Windows-specific
-behaviour (symlink privilege, path handling) is gated until Windows is
-shipped.
+Tests run on **Linux, macOS, and Windows**. Test symlinks go through a
+per-module cross-platform shim (GitHub's Windows runners execute elevated, so
+symlink creation works there); permission-bits tests are `#[cfg(unix)]` —
+Unix mode bits have no Windows meaning.

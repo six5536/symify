@@ -230,8 +230,10 @@ fn digest(path: &Path, include_mode: bool) -> Result<blake3::Hash> {
     Ok(hasher.finalize())
 }
 
-/// Permission bits used for `sync`-mode equality. On Unix these are the mode's
-/// permission/setuid/sticky bits; elsewhere we fall back to the read-only flag.
+/// Permission bits used for `copy`-mode equality. On Unix these are the mode's
+/// permission/setuid/sticky bits. Elsewhere the constant `0`: Windows has no
+/// mode bits, and its read-only attribute is noise, not signal — there the
+/// quick-check is size + mtime only (PLAN-012 decision 2).
 #[cfg(unix)]
 fn perm_bits(md: &std::fs::Metadata) -> u32 {
     use std::os::unix::fs::PermissionsExt;
@@ -239,8 +241,8 @@ fn perm_bits(md: &std::fs::Metadata) -> u32 {
 }
 
 #[cfg(not(unix))]
-fn perm_bits(md: &std::fs::Metadata) -> u32 {
-    md.permissions().readonly() as u32
+fn perm_bits(_md: &std::fs::Metadata) -> u32 {
+    0
 }
 
 // ----- write side (executor) --------------------------------------------
@@ -387,7 +389,8 @@ fn make_symlink(target: &Path, link: &Path) -> Result<()> {
 
 #[cfg(windows)]
 fn make_symlink(target: &Path, link: &Path) -> Result<()> {
-    // Choose the right Windows symlink kind based on the target.
+    // Choose the right Windows symlink kind based on the target; a wrong kind
+    // yields a broken link.
     let is_dir = std::fs::metadata(target)
         .map(|m| m.is_dir())
         .unwrap_or(false);
@@ -396,7 +399,23 @@ fn make_symlink(target: &Path, link: &Path) -> Result<()> {
     } else {
         std::os::windows::fs::symlink_file(target, link)
     };
-    res.map_err(|e| Error::io(link, e))
+    res.map_err(|e| {
+        // ERROR_PRIVILEGE_NOT_HELD: stock Windows refuses symlink creation.
+        // Fail the entry with guidance rather than silently substituting a
+        // mechanism — the config says what happens.
+        if e.raw_os_error() == Some(1314) {
+            Error::io(
+                link,
+                std::io::Error::new(
+                    e.kind(),
+                    "creating symlinks requires privilege on Windows — enable \
+                     Developer Mode, run elevated, or use mode = \"copy\"",
+                ),
+            )
+        } else {
+            Error::io(link, e)
+        }
+    })
 }
 
 /// Lexically normalize a path (resolve `.` and `..` without touching the
@@ -419,6 +438,24 @@ pub(crate) fn normalize(p: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
+    /// Test symlink on any platform: Unix `symlink`, or the target-kind-aware
+    /// Windows call (CI runners execute elevated, so no privilege issues).
+    fn symlink<P: AsRef<Path>, Q: AsRef<Path>>(target: P, link: Q) -> std::io::Result<()> {
+        #[cfg(unix)]
+        return std::os::unix::fs::symlink(target, link);
+        #[cfg(windows)]
+        {
+            let is_dir = std::fs::metadata(target.as_ref())
+                .map(|m| m.is_dir())
+                .unwrap_or(false);
+            if is_dir {
+                std::os::windows::fs::symlink_dir(target, link)
+            } else {
+                std::os::windows::fs::symlink_file(target, link)
+            }
+        }
+    }
+
     #[test]
     fn inspect_distinguishes_kinds() {
         let dir = tempfile::tempdir().unwrap();
@@ -428,7 +465,7 @@ mod tests {
         let subdir = base.join("d");
         std::fs::create_dir(&subdir).unwrap();
         let link = base.join("l");
-        std::os::unix::fs::symlink(&file, &link).unwrap();
+        symlink(&file, &link).unwrap();
 
         assert_eq!(inspect(&base.join("nope")).unwrap(), NodeKind::Missing);
         assert_eq!(inspect(&file).unwrap(), NodeKind::File);
@@ -443,7 +480,7 @@ mod tests {
         let target = base.join("real");
         std::fs::write(&target, b"x").unwrap();
         let link = base.join("link");
-        std::os::unix::fs::symlink(&target, &link).unwrap();
+        symlink(&target, &link).unwrap();
 
         assert!(symlink_points_to(&link, &target).unwrap());
         assert!(!symlink_points_to(&link, &base.join("other")).unwrap());
@@ -474,6 +511,8 @@ mod tests {
         assert!(!content_equal(&da, &db).unwrap());
     }
 
+    // Permission bits are Unix semantics; not meaningful on Windows.
+    #[cfg(unix)]
     #[test]
     fn checksum_equal_is_permission_sensitive_but_content_equal_is_not() {
         use std::os::unix::fs::PermissionsExt;
@@ -494,6 +533,8 @@ mod tests {
         assert!(!checksum_equal(&a, &b).unwrap()); // mode-sensitive: now differs
     }
 
+    // Permission bits are Unix semantics; not meaningful on Windows.
+    #[cfg(unix)]
     #[test]
     fn copy_tree_preserves_directory_permissions() {
         use crate::clock::SystemClock;
@@ -526,6 +567,8 @@ mod tests {
             .unwrap();
     }
 
+    // Permission bits are Unix semantics; not meaningful on Windows.
+    #[cfg(unix)]
     #[test]
     fn quick_equal_detects_size_mode_and_mtime_drift() {
         use std::os::unix::fs::PermissionsExt;
@@ -575,9 +618,9 @@ mod tests {
         let la = base.join("la");
         let lb = base.join("lb");
         let lc = base.join("lc");
-        std::os::unix::fs::symlink("target/x", &la).unwrap();
-        std::os::unix::fs::symlink("target/x", &lb).unwrap(); // same (dangling) target
-        std::os::unix::fs::symlink("target/y", &lc).unwrap(); // different target
+        symlink("target/x", &la).unwrap();
+        symlink("target/x", &lb).unwrap(); // same (dangling) target
+        symlink("target/y", &lc).unwrap(); // different target
 
         // Equal by target string, even though the targets don't exist.
         assert!(quick_equal(&la, &lb, 0).unwrap());
@@ -606,6 +649,8 @@ mod tests {
         assert!(content_equal(&a, &b).unwrap());
     }
 
+    // Permission bits are Unix semantics; not meaningful on Windows.
+    #[cfg(unix)]
     #[test]
     fn atomic_copy_handles_read_only_source() {
         use crate::clock::SystemClock;
@@ -675,7 +720,7 @@ mod tests {
         let file = base.join("file");
         std::fs::write(&file, b"x").unwrap();
         let link = base.join("link");
-        std::os::unix::fs::symlink(&full, &link).unwrap();
+        symlink(&full, &link).unwrap();
 
         assert!(!is_nonempty_dir(&empty));
         assert!(is_nonempty_dir(&full));
@@ -714,7 +759,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let base = dir.path();
         let l = base.join("l");
-        std::os::unix::fs::symlink("does/not/exist", &l).unwrap();
+        symlink("does/not/exist", &l).unwrap();
         assert_eq!(
             inspect(&l).unwrap(),
             NodeKind::Symlink("does/not/exist".into())
@@ -728,15 +773,15 @@ mod tests {
         let base = dir.path();
         // A self-referential link: inspecting it must not follow (no hang).
         let s = base.join("self");
-        std::os::unix::fs::symlink(&s, &s).unwrap();
+        symlink(&s, &s).unwrap();
         assert!(matches!(inspect(&s).unwrap(), NodeKind::Symlink(_)));
 
         // A 2-cycle a -> b -> a: comparisons treat links by target string and
         // never follow, so they terminate.
         let a = base.join("a");
         let b = base.join("b");
-        std::os::unix::fs::symlink(&b, &a).unwrap();
-        std::os::unix::fs::symlink(&a, &b).unwrap();
+        symlink(&b, &a).unwrap();
+        symlink(&a, &b).unwrap();
         assert!(matches!(inspect(&a).unwrap(), NodeKind::Symlink(_)));
         assert!(content_equal(&a, &a).unwrap()); // identical target strings
         assert!(!content_equal(&a, &b).unwrap()); // a->b vs b->a differ
@@ -799,6 +844,8 @@ mod tests {
         assert!(leftovers.is_empty(), "temp not cleaned up: {leftovers:?}");
     }
 
+    // Permission bits are Unix semantics; not meaningful on Windows.
+    #[cfg(unix)]
     #[test]
     fn copy_into_readonly_dir_errors_without_leaking_temp() {
         use crate::clock::SystemClock;

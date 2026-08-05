@@ -21,6 +21,11 @@ mise install     # install all pinned tools
 npm install      # install the JS workspace (the launcher package)
 ```
 
+Use `npm install`, not `npm ci`: the launcher pins the current version of
+every platform package, and until a release has published that version for a
+newly added platform (`@six5536/symify-win32-x64` at present) the lockfile
+cannot carry a resolved entry for it, which `npm ci` treats as fatal.
+
 A plain `cargo build` needs neither Node nor `typify` — the generated config
 model is checked in. Node is only needed for the npm packages and the codegen
 drift check.
@@ -46,11 +51,11 @@ npm run coverage:check   # enforce the gate: line coverage >= 90% per crate
 
 npm run test:launcher   # node test for the npm launcher shim
 
-npm run verify-version  # every version in the tree agrees (14 locations)
+npm run verify-version  # every version in the tree agrees (16 locations)
 npm run release <ver>   # bump + verify + commit + tag (does not push)
 ```
 
-Only the launcher (`packages/symify`) is an npm workspace. The four
+Only the launcher (`packages/symify`) is an npm workspace. The five
 platform-binary packages deliberately are not: npm enforces their `os`/`cpu`
 fields on workspace members unconditionally, so including them made a plain
 `npm install` fail with `EBADPLATFORM` on every host. Nothing needs them to be
@@ -134,8 +139,8 @@ gives per-test process isolation. The layers (see
 - Use [Conventional Commits](https://www.conventionalcommits.org/) for messages
   (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`).
 - Keep PRs focused; update `knowledge/`/`plans/` when behaviour or design changes.
-- Make sure the full check list above passes. CI runs tests on macOS and the
-  coverage gate on Linux.
+- Make sure the full check list above passes. CI runs tests on macOS and
+  Windows, and the coverage gate on Linux.
 
 ## Dependencies
 
@@ -159,7 +164,7 @@ npm run release X.Y.Z
 ```
 
 That sets the version everywhere in lockstep (Cargo workspace, the internal
-`symify-core` pin, all five `package.json` files, and **both lockfiles**),
+`symify-core` pin, all six `package.json` files, and **both lockfiles**),
 verifies it landed consistently, then commits and tags. It deliberately stops
 there.
 
@@ -178,8 +183,8 @@ Pushing the tag is what triggers the publish, and publishes cannot be undone
 1. `meta` — the tag must match every version in the tree and have a changelog
    section.
 2. `checks` — the full CI gate, via the shared reusable workflow.
-3. `build` — cross-build four binaries (`cargo-zigbuild` for the static-musl
-   Linux targets, native `cargo` on macOS) and assert the Linux ones are static.
+3. `build` — build five binaries (`cargo-zigbuild` for the static-musl
+   Linux targets, native `cargo` on macOS and Windows) and assert the Linux ones are static.
 4. `publish` — smoke-test the binary, dry-run every publish, then publish the
    platform packages, then the launcher, then
    `cargo publish --workspace --locked`.
@@ -209,5 +214,5 @@ one-time password, so it works unattended.
 
 `npm run verify-version [version]` checks that the Cargo workspace, the
 `symify-core` pin, every `package.json`, the launcher's `optionalDependencies`,
-`Cargo.lock` and `package-lock.json` all agree. That is 14 locations. It runs in
+`Cargo.lock` and `package-lock.json` all agree. That is 16 locations. It runs in
 CI and again against the tag at release time.

@@ -7,10 +7,11 @@ const { selectPackage, binaryName, resolveBinary, exitCode } = require("../lib/b
 test("selectPackage maps supported platforms", () => {
   assert.strictEqual(selectPackage("linux", "x64"), "@six5536/symify-linux-x64");
   assert.strictEqual(selectPackage("darwin", "arm64"), "@six5536/symify-darwin-arm64");
+  assert.strictEqual(selectPackage("win32", "x64"), "@six5536/symify-win32-x64");
 });
 
 test("selectPackage returns null for unsupported platforms", () => {
-  assert.strictEqual(selectPackage("win32", "x64"), null);
+  assert.strictEqual(selectPackage("win32", "arm64"), null);
   assert.strictEqual(selectPackage("linux", "riscv64"), null);
 });
 
@@ -25,10 +26,18 @@ test("resolveBinary returns the resolved path for a supported platform", () => {
     resolveBinary("linux", "x64", fakeResolve),
     "/fake/node_modules/@six5536/symify-linux-x64/bin/symify",
   );
+  // Windows resolves the .exe inside its platform package.
+  assert.strictEqual(
+    resolveBinary("win32", "x64", fakeResolve),
+    "/fake/node_modules/@six5536/symify-win32-x64/bin/symify.exe",
+  );
 });
 
 test("resolveBinary errors clearly on unsupported platform", () => {
-  assert.throws(() => resolveBinary("win32", "x64", () => "unused"), /No prebuilt symify binary for win32-x64/);
+  assert.throws(
+    () => resolveBinary("win32", "arm64", () => "unused"),
+    /No prebuilt symify binary for win32-arm64/,
+  );
 });
 
 test("exitCode forwards a normal exit status", () => {

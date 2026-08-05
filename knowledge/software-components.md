@@ -21,7 +21,7 @@ links:
 ---
 
 The system implementing [architecture](architecture.md) is one Rust library
-plus one binary (workspace globs `crates/lib/*`, `crates/app/*`), and five npm
+plus one binary (workspace globs `crates/lib/*`, `crates/app/*`), and six npm
 packages.
 
 # `crates/lib/symify-core` (library)
@@ -73,6 +73,7 @@ packages/
   symify-linux-arm64/
   symify-darwin-x64/
   symify-darwin-arm64/
+  symify-win32-x64/    # symify.exe
 ```
 
 - The launcher (`symify`) declares each platform package in
@@ -84,17 +85,17 @@ packages/
   rules).
 - **Version lockstep**: launcher + all platform packages share one version and
   publish atomically.
-- **Unsupported platform** (no matching optional dep — e.g. Windows in v1, or
+- **Unsupported platform** (no matching optional dep — e.g. Windows arm64, or
   a 32-bit or non-x86/ARM architecture): fail with a message that lists the
   supported platforms and points at `cargo install symify`. **No**
   auto-download / build-from-source fallback in v1. The Linux packages are
   static musl builds, so they cover glibc and musl hosts alike — libc is not a
   dimension of this matrix.
 
-# Platform matrix (v1)
+# Platform matrix
 
-Ships **Unix only**: Linux `x86_64`/`aarch64` (**static musl**) + macOS
-`x86_64`/`aarch64`.
+Linux `x86_64`/`aarch64` (**static musl**), macOS `x86_64`/`aarch64`, and
+Windows `x86_64` (msvc).
 
 Linux is statically linked against musl rather than dynamically against glibc.
 It measured marginally *smaller* than the glibc build (the static libc is
@@ -104,9 +105,14 @@ cross C compiler that `blake3`'s NEON code needs; plain `rust-lld` cannot link
 the aarch64 musl target for that reason. zigbuild's musl output is non-PIE,
 which is accepted for a local CLI with no network input.
 
-**Windows is designed-for but unshipped** — adding it is a build-target +
-symlink-privilege task (Developer Mode / elevation, with `sync`-mode copy as
-the no-privilege fallback), not a rewrite.
+**Windows (x64)**: built natively on the `windows-latest` runner (no cross
+setup — zigbuild serves only the musl targets), shipped as
+`@six5536/symify-win32-x64` and a `.zip` archive. Symlink creation needs
+Developer Mode or elevation; without it the entry fails with guidance naming
+`mode = "copy"` as the no-privilege fallback — never a silent mechanism
+substitution. `fs` picks `symlink_file`/`symlink_dir` by target kind. Native
+arm64 is deferred until a CI runner can execute it; Windows-on-ARM uses x64
+emulation.
 
 # CI/CD (`.github/workflows`)
 
@@ -117,17 +123,19 @@ by both `ci.yml` and `release.yml`, so the release gate cannot drift from CI.
   doctests, `cargo doc -D warnings`, the npm launcher tests, version
   consistency, the AOKF knowledgebase validation (`check:aokf`), the
   per-crate coverage gate, `codegen:check` (schema drift), and `cargo-deny`
-  for licences/bans/sources.
+  for licences/bans/sources. Tests and doctests also run on Windows; the
+  OS-independent checks run once, on macos.
 - **`ci.yml`**: calls `checks.yml` on push and PR.
 - **`audit.yml`**: scheduled `cargo-deny check advisories`, opening an issue
   rather than failing builds — advisories are exogenous and must not block an
   unrelated PR.
 - **`release.yml`** (tag `v*`): verify the tag against every version in the
   tree and against a `CHANGELOG.md` section → run `checks.yml` in full →
-  cross-build the four binaries and assert the Linux ones are static →
-  dry-run every publish → publish platform packages, then the launcher, then
-  `cargo publish --workspace --locked` → create a GitHub Release with
-  archives, a man page, completions and `SHA256SUMS`. Prerelease tags publish
+  build the five binaries (cross for musl, native for macOS and Windows) and
+  assert the Linux ones are static → dry-run every publish → publish platform
+  packages, then the launcher, then `cargo publish --workspace --locked` →
+  create a GitHub Release with archives (`.tar.gz`; `.zip` for Windows), a
+  man page, completions and `SHA256SUMS`. Prerelease tags publish
   under the npm `next` dist-tag and are flagged as prereleases.
 
 Cross-registry atomicity is impossible, so the guarantee is *ordered,

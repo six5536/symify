@@ -177,12 +177,40 @@ fn hostname() -> String {
     String::from_utf8_lossy(&buf[..len]).into_owned()
 }
 
-/// Off Unix, the environment carries the machine name (`COMPUTERNAME` on
-/// Windows); empty when unset, which no non-empty pattern matches.
-#[cfg(not(unix))]
+/// The DNS hostname via `GetComputerNameExW`, declared directly like the Unix
+/// syscalls above. Not `COMPUTERNAME`: that is the NetBIOS name — uppercase,
+/// 15 characters max — so `host` patterns that match on Unix would silently
+/// miss on Windows. The DNS hostname is the closest analogue of the Unix
+/// nodename; `COMPUTERNAME` remains the fallback if the call fails.
+#[cfg(windows)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 fn hostname() -> String {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetComputerNameExW(name_type: u32, buffer: *mut u16, size: *mut u32) -> i32;
+    }
+    const COMPUTER_NAME_PHYSICAL_DNS_HOSTNAME: u32 = 5;
+    let mut buf = [0u16; 256];
+    let mut len = buf.len() as u32;
+    let ok = unsafe {
+        GetComputerNameExW(
+            COMPUTER_NAME_PHYSICAL_DNS_HOSTNAME,
+            buf.as_mut_ptr(),
+            &mut len,
+        )
+    } != 0;
+    if ok {
+        return String::from_utf16_lossy(&buf[..len as usize]);
+    }
     std::env::var("COMPUTERNAME").unwrap_or_default()
+}
+
+/// Neither Unix nor Windows: no portable hostname source; empty matches no
+/// non-empty pattern.
+#[cfg(not(any(unix, windows)))]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn hostname() -> String {
+    String::new()
 }
 
 /// Discover (auto-initing a default config if needed), then load + resolve.
@@ -526,6 +554,24 @@ mod tests {
     use super::*;
     use symify_core::model::Conflict;
 
+    /// Test symlink on any platform: Unix `symlink`, or the target-kind-aware
+    /// Windows call (CI runners execute elevated, so no privilege issues).
+    fn symlink<P: AsRef<Path>, Q: AsRef<Path>>(target: P, link: Q) -> std::io::Result<()> {
+        #[cfg(unix)]
+        return std::os::unix::fs::symlink(target, link);
+        #[cfg(windows)]
+        {
+            let is_dir = std::fs::metadata(target.as_ref())
+                .map(|m| m.is_dir())
+                .unwrap_or(false);
+            if is_dir {
+                std::os::windows::fs::symlink_dir(target, link)
+            } else {
+                std::os::windows::fs::symlink_file(target, link)
+            }
+        }
+    }
+
     fn cmd(args: &[&str]) -> Command {
         Cli::try_parse_from(args).unwrap().command.unwrap()
     }
@@ -641,7 +687,7 @@ mod tests {
         let store = dir.path().join("store_f");
         let live = dir.path().join("live_f");
         std::fs::write(&store, b"content").unwrap();
-        std::os::unix::fs::symlink(&store, &live).unwrap();
+        symlink(&store, &live).unwrap();
 
         // Symlink mode: a live link pointing at store would be restored.
         assert!(would_restore(&live, &store, Mode::Symlink).unwrap());

@@ -194,7 +194,10 @@ An entry is AlreadyOk (no-op) when:
   gracefully.
 
 Permission bits are part of identity only for `copy` mode, where both
-sides are independent real files. In `symlink` mode the real file lives in
+sides are independent real files — and only on Unix. Windows has no mode
+bits, and its read-only attribute is deliberately ignored (noise, not
+signal): there the quick-check is size + mtime only. In `symlink` mode the
+real file lives in
 `store` and keeps its own mode; the relink decision for an already-matching
 live file compares content only (the live file is about to become a link, so
 its mode is discarded).

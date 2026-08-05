@@ -29,13 +29,12 @@ the config is ever touched.
 
 Ships two ways:
 
-- **npm** (`npm i -g symify`) — prebuilt binaries for Linux and macOS, x64
-  and arm64.
+- **npm** (`npm i -g symify`) — prebuilt binaries for Linux and macOS (x64
+  and arm64) and Windows (x64).
 - **cargo** (`cargo install symify`) — build from source; also the route on
   platforms without a prebuilt binary.
 
 # Status
 
 Released; pre-1.0. Minor versions may carry breaking changes, and
-`symify-core`'s API is not stable yet. Windows is designed for but not
-shipped.
+`symify-core`'s API is not stable yet.

@@ -33,4 +33,4 @@ nor `typify` (the generated config model is checked in).
 4. Before a PR, run the full CI-equivalent check list (see
    [development-commands](development-commands.md)) and meet
    [definition-of-done](definition-of-done.md). CI runs tests on macOS and
-   the coverage gate on Linux.
+   Windows, and the coverage gate on Linux.

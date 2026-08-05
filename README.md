@@ -27,17 +27,19 @@ There are two locations:
 ## Install
 
 ```sh
-npm install -g symify   # prebuilt binary, Linux/macOS
+npm install -g symify   # prebuilt binary, Linux/macOS/Windows
 cargo install symify    # from source, needs a Rust toolchain
 ```
 
-Prebuilt binaries cover Linux and macOS on `x64` and `arm64`. The Linux builds
-are statically linked against musl, so they need no particular glibc version and
-run on Alpine too.
+Prebuilt binaries cover Linux and macOS on `x64` and `arm64`, and Windows on
+`x64`. The Linux builds are statically linked against musl, so they need no
+particular glibc version and run on Alpine too. On Windows-on-ARM the `x64`
+binary runs under the OS's emulation, but npm only installs it under an `x64`
+build of Node — otherwise grab the release archive or `cargo install symify`.
 
-**Windows is not supported yet.** The code is written to be portable and the
-platform-specific paths exist, but no Windows binary is built or tested, so
-building from source there is at your own risk.
+**On Windows**, creating symlinks needs privilege: enable Developer Mode, or
+run elevated. Without it, symlink-mode entries fail with guidance while
+`mode = "copy"` works everywhere. Symlink mode expects an NTFS filesystem.
 
 ## Quickstart
 

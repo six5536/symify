@@ -13,6 +13,10 @@ publish a version it cannot find a heading for.
 
 ### Added
 
+- Windows support (x64): prebuilt binaries via `npm i -g symify` and a `.zip`
+  release archive, with CI running the test suite on Windows. Creating
+  symlinks needs Developer Mode or elevation; without it, symlink entries
+  fail with guidance and `mode = "copy"` works unprivileged.
 - `backup_keep = N` (settings or per mapping): when a new
   `<name>.<timestamp>.bak` backup is written, the oldest beyond `N` are
   deleted (the new backup counts). Opt-in — absent or `0` keeps every backup,

@@ -93,6 +93,24 @@ impl Fx {
     }
 }
 
+/// Test symlink on any platform: Unix `symlink`, or the target-kind-aware
+/// Windows call (CI runners execute elevated, so no privilege issues).
+fn make_test_symlink<P: AsRef<Path>, Q: AsRef<Path>>(target: P, link: Q) -> std::io::Result<()> {
+    #[cfg(unix)]
+    return std::os::unix::fs::symlink(target, link);
+    #[cfg(windows)]
+    {
+        let is_dir = std::fs::metadata(target.as_ref())
+            .map(|m| m.is_dir())
+            .unwrap_or(false);
+        if is_dir {
+            std::os::windows::fs::symlink_dir(target, link)
+        } else {
+            std::os::windows::fs::symlink_file(target, link)
+        }
+    }
+}
+
 fn is_symlink(p: &Path) -> bool {
     p.symlink_metadata()
         .is_ok_and(|m| m.file_type().is_symlink())
@@ -819,7 +837,7 @@ fn diff_symlink_mode_states_and_clean_exit() {
     fx.write(&fx.sp("a"), b"store\n");
     // b: wrong target.
     fx.write(&fx.sp("b"), b"x");
-    std::os::unix::fs::symlink(fx.sp("a"), fx.lp("b")).unwrap();
+    make_test_symlink(fx.sp("a"), fx.lp("b")).unwrap();
 
     let out = fx.cmd("diff").assert().code(1);
     let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
@@ -912,6 +930,25 @@ fn backup_keep_dir_prune_is_gated_like_any_recursive_delete() {
         !fx.sp("d.20200101000000.bak").exists(),
         "pruned under --yes"
     );
+}
+
+#[test]
+fn diff_names_kinds_when_one_side_is_a_symlink() {
+    // A symlink vs a regular file must not render as "links differ" with a
+    // bogus target; it names both kinds.
+    let fx = Fx::copy("backup", &["\"conf\" = true"]);
+    fx.write(&fx.sp("conf/f"), b"plain file\n");
+    std::fs::create_dir_all(fx.lp("conf")).unwrap();
+    make_test_symlink("/nonexistent", fx.lp("conf/f")).unwrap();
+
+    let out = fx.cmd("diff").assert().code(1);
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains("kinds differ: live is a symlink, store is a file"),
+        "got: {stdout}"
+    );
+    assert!(!stdout.contains("links differ"), "got: {stdout}");
+    assert!(!stdout.contains("<not a link>"), "got: {stdout}");
 }
 
 #[test]
