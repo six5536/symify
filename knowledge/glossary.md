@@ -31,7 +31,8 @@ Terms as used throughout the project; mechanics in
 - **`S` / `D`** — an entry's resolved live-side path (link/copy location) and
   store-side path (real content).
 - **mode** — the mechanism per entry: `symlink` (a link at `S` pointing to
-  `D`) or `sync` (independent copies on both sides).
+  `D`) or `copy` (independent copies on both sides; named `sync` before
+  PLAN-008).
 - **verb** — the direction-owning command: `add`, `remove`, `list`, `sync`,
   `deploy`, `status`.
 - **adopt** — move a real live file into the store and replace it with a
@@ -47,10 +48,10 @@ Terms as used throughout the project; mechanics in
 - **backup** — the `<name>.<timestamp>.bak` rename protecting whichever side
   is about to be overwritten (timestamp `YYYYMMDDHHMMSS`).
 - **drift** — a difference the run did not resolve; drives exit code `1`.
-- **quick-check** — the default `sync`-mode equality test: size + mtime +
+- **quick-check** — the default `copy`-mode equality test: size + mtime +
   permission bits, per file. `--checksum` upgrades it to a BLAKE3 content
   compare.
-- **additive** — the `sync`-mode copy property: only changed files are
+- **additive** — the `copy`-mode property: only changed files are
   copied, destination-only files are never deleted.
 - **AlreadyOk** — the planner's no-op action for an entry already in its
   desired state.

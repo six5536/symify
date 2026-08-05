@@ -23,7 +23,7 @@ links:
 [settings]
 live = "~"            # working location (links/copies appear here)
 store = "~/dotfiles"  # backing repository (real content lives here)
-mode = "symlink"      # symlink | sync
+mode = "symlink"      # symlink | copy
 conflict = "backup"   # skip | replace | backup
 
 [mappings.dotfiles]

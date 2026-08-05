@@ -34,7 +34,6 @@ links:
   API is not stable.
 - **Cross-registry publishing is not atomic**; the release pipeline is
   ordered, dry-run-gated and recoverable instead.
-- The `sync` mode name collides with the `sync` verb; accepted.
 - zigbuild's musl output is non-PIE; accepted for a local CLI with no network
   input.
 

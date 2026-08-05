@@ -415,7 +415,7 @@ fn would_restore(s: &Path, d: &Path, mode: Mode) -> symify_core::Result<bool> {
     }
     Ok(match mode {
         Mode::Symlink => fs::symlink_points_to(s, d)?,
-        Mode::Sync => false,
+        Mode::Copy => false,
     })
 }
 
@@ -552,8 +552,8 @@ mod tests {
 
         // Symlink mode: a live link pointing at store would be restored.
         assert!(would_restore(&live, &store, Mode::Symlink).unwrap());
-        // Sync mode keeps independent copies — never "restores".
-        assert!(!would_restore(&live, &store, Mode::Sync).unwrap());
+        // Copy mode keeps independent copies — never "restores".
+        assert!(!would_restore(&live, &store, Mode::Copy).unwrap());
         // A missing store side short-circuits to false.
         let missing_store = dir.path().join("gone");
         assert!(!would_restore(&live, &missing_store, Mode::Symlink).unwrap());

@@ -75,11 +75,11 @@ pub struct RunArgs {
     #[arg(short = 'y', long = "yes")]
     pub yes: bool,
 
-    /// In `sync` mode, compare file content exactly instead of by size+mtime.
+    /// In `copy` mode, compare file content exactly instead of by size+mtime.
     #[arg(long)]
     pub checksum: bool,
 
-    /// In `sync` mode, treat mtimes within this many seconds as equal (for
+    /// In `copy` mode, treat mtimes within this many seconds as equal (for
     /// coarse-granularity filesystems). Default 0 (exact).
     #[arg(long, value_name = "SECONDS", default_value_t = 0)]
     pub modify_window: u64,
@@ -100,11 +100,11 @@ pub struct QueryArgs {
     #[arg(short = 'm', long = "mapping", value_name = "MAPPING")]
     pub mapping: Vec<String>,
 
-    /// In `sync` mode, compare file content exactly instead of by size+mtime.
+    /// In `copy` mode, compare file content exactly instead of by size+mtime.
     #[arg(long)]
     pub checksum: bool,
 
-    /// In `sync` mode, treat mtimes within this many seconds as equal (for
+    /// In `copy` mode, treat mtimes within this many seconds as equal (for
     /// coarse-granularity filesystems). Default 0 (exact).
     #[arg(long, value_name = "SECONDS", default_value_t = 0)]
     pub modify_window: u64,

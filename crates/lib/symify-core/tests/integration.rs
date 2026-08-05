@@ -206,7 +206,7 @@ fn sync_copy_mode_preserves_and_tracks_permission_bits() {
     fx.write(&fx.lp("script.sh"), b"#!/bin/sh\necho hi\n");
     std::fs::set_permissions(fx.lp("script.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
     let cfg = fx.cfg(
-        Mode::Sync,
+        Mode::Copy,
         Conflict::Backup,
         &[("script.sh", LinkValue::Boolean(true))],
     );
@@ -237,7 +237,7 @@ fn sync_copy_mode_roundtrips_directory() {
     fx.write(&fx.lp("conf/a.toml"), b"a");
     fx.write(&fx.lp("conf/sub/b.toml"), b"b");
     let cfg = fx.cfg(
-        Mode::Sync,
+        Mode::Copy,
         Conflict::Backup,
         &[("conf", LinkValue::Boolean(true))],
     );

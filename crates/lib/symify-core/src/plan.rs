@@ -36,7 +36,7 @@ pub struct RunOptions {
 }
 
 impl RunOptions {
-    /// Compare two `sync`-mode paths for equality under these options: the exact
+    /// Compare two `copy`-mode paths for equality under these options: the exact
     /// [`fs::checksum_equal`] when `--checksum` is set, else the fast
     /// [`fs::quick_equal`] with the configured modify-window.
     pub(crate) fn equal(&self, a: &Path, b: &Path) -> Result<bool> {
@@ -377,7 +377,7 @@ fn plan_sync(s: &Path, d: &Path, m: &ResolvedMapping, opts: RunOptions) -> Resul
     let s_state = fs::inspect(s)?;
     match m.mode {
         Mode::Symlink => plan_sync_link(s, d, m.conflict, s_state),
-        Mode::Sync => plan_sync_copy(s, d, m.conflict, s_state, opts),
+        Mode::Copy => plan_sync_copy(s, d, m.conflict, s_state, opts),
     }
 }
 
@@ -440,7 +440,7 @@ fn plan_deploy(s: &Path, d: &Path, m: &ResolvedMapping, opts: RunOptions) -> Res
     }
     match m.mode {
         Mode::Symlink => plan_deploy_link(s, d, m.conflict),
-        Mode::Sync => plan_deploy_copy(s, d, m.conflict, opts),
+        Mode::Copy => plan_deploy_copy(s, d, m.conflict, opts),
     }
 }
 
@@ -485,7 +485,7 @@ fn plan_deploy_copy(s: &Path, d: &Path, conflict: Conflict, opts: RunOptions) ->
     diff_copy(d, s, conflict, opts, ActionKind::Pull)
 }
 
-/// Diff a `sync`-mode entry's `src` against `dst` and decide its [`Action`]:
+/// Diff a `copy`-mode entry's `src` against `dst` and decide its [`Action`]:
 /// walk per-file, emitting `Copy`/`Backup`/`Remove` ops only where they differ
 /// (additive — destination-only entries are left untouched). Aggregates an
 /// unresolved `skip`-difference into the drift-bearing outcome.
@@ -826,7 +826,7 @@ mod tests {
         let fx = Fx::new();
         fx.write(&fx.lp("x"), b"data");
         let a = act(
-            &fx.cfg(Mode::Sync, Conflict::Backup, vec![("x", t())]),
+            &fx.cfg(Mode::Copy, Conflict::Backup, vec![("x", t())]),
             Verb::Sync,
         );
         assert_eq!(
@@ -878,7 +878,7 @@ mod tests {
         match_mtime(&fx.lp("x"), &fx.sp("x")); // in sync: same content, size, mtime
         assert_eq!(
             act(
-                &fx.cfg(Mode::Sync, Conflict::Backup, vec![("x", t())]),
+                &fx.cfg(Mode::Copy, Conflict::Backup, vec![("x", t())]),
                 Verb::Sync
             ),
             Action::AlreadyOk
@@ -891,7 +891,7 @@ mod tests {
         synced_dir(&fx);
         assert_eq!(
             act(
-                &fx.cfg(Mode::Sync, Conflict::Backup, vec![("dir", t())]),
+                &fx.cfg(Mode::Copy, Conflict::Backup, vec![("dir", t())]),
                 Verb::Sync
             ),
             Action::AlreadyOk
@@ -907,7 +907,7 @@ mod tests {
         fx.write(&fx.lp("dir/b"), b"b-changed-bigger"); // different size → detected
         assert_eq!(
             act(
-                &fx.cfg(Mode::Sync, Conflict::Replace, vec![("dir", t())]),
+                &fx.cfg(Mode::Copy, Conflict::Replace, vec![("dir", t())]),
                 Verb::Sync
             ),
             Action::Apply {
@@ -927,7 +927,7 @@ mod tests {
         fx.write(&fx.lp("dir/c"), b"c"); // brand-new, absent in store
         assert_eq!(
             act(
-                &fx.cfg(Mode::Sync, Conflict::Backup, vec![("dir", t())]),
+                &fx.cfg(Mode::Copy, Conflict::Backup, vec![("dir", t())]),
                 Verb::Sync
             ),
             Action::Apply {
@@ -947,7 +947,7 @@ mod tests {
         fx.write(&fx.lp("dir/b"), b"b-changed-bigger"); // differs → skipped (drift)
         assert_eq!(
             act(
-                &fx.cfg(Mode::Sync, Conflict::Skip, vec![("dir", t())]),
+                &fx.cfg(Mode::Copy, Conflict::Skip, vec![("dir", t())]),
                 Verb::Sync
             ),
             Action::ApplyDrift {
@@ -965,7 +965,7 @@ mod tests {
         // Additive: store-only files are never pruned — nothing to do.
         assert_eq!(
             act(
-                &fx.cfg(Mode::Sync, Conflict::Replace, vec![("dir", t())]),
+                &fx.cfg(Mode::Copy, Conflict::Replace, vec![("dir", t())]),
                 Verb::Sync
             ),
             Action::AlreadyOk
@@ -980,7 +980,7 @@ mod tests {
         fx.write(&fx.lp("dir/old.20260101.bak"), b"backup");
         assert_eq!(
             act(
-                &fx.cfg(Mode::Sync, Conflict::Backup, vec![("dir", t())]),
+                &fx.cfg(Mode::Copy, Conflict::Backup, vec![("dir", t())]),
                 Verb::Sync
             ),
             Action::AlreadyOk
@@ -998,7 +998,7 @@ mod tests {
         let later = mtime(&fx.lp("x")) + std::time::Duration::from_secs(5);
         set_mtime(&fx.lp("x"), later);
 
-        let cfg = fx.cfg(Mode::Sync, Conflict::Replace, vec![("x", t())]);
+        let cfg = fx.cfg(Mode::Copy, Conflict::Replace, vec![("x", t())]);
         // Default quick-check: mtime drift → re-sync.
         assert!(matches!(act(&cfg, Verb::Sync), Action::Apply { .. }));
         // --checksum: content identical → already ok.
@@ -1018,7 +1018,7 @@ mod tests {
         let skewed = mtime(&fx.sp("x")) + std::time::Duration::from_secs(1);
         set_mtime(&fx.sp("x"), skewed);
 
-        let cfg = fx.cfg(Mode::Sync, Conflict::Replace, vec![("x", t())]);
+        let cfg = fx.cfg(Mode::Copy, Conflict::Replace, vec![("x", t())]);
         // Exact (window 0): 1s skew counts as a difference.
         assert!(matches!(act(&cfg, Verb::Sync), Action::Apply { .. }));
         // window 1: tolerated as equal.
@@ -1130,7 +1130,7 @@ mod tests {
         let fx = Fx::new();
         fx.write(&fx.sp("x"), b"data");
         let a = act(
-            &fx.cfg(Mode::Sync, Conflict::Backup, vec![("x", t())]),
+            &fx.cfg(Mode::Copy, Conflict::Backup, vec![("x", t())]),
             Verb::Deploy,
         );
         assert_eq!(
@@ -1152,7 +1152,7 @@ mod tests {
         fx.write(&fx.lp("x"), b"live");
         assert_eq!(
             act(
-                &fx.cfg(Mode::Sync, Conflict::Skip, vec![("x", t())]),
+                &fx.cfg(Mode::Copy, Conflict::Skip, vec![("x", t())]),
                 Verb::Deploy
             ),
             Action::Conflict

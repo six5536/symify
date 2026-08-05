@@ -141,7 +141,7 @@ mod tests {
             key: "dir".into(),
             live: "/live/dir".into(),
             store: "/store/dir".into(),
-            mode: Mode::Sync,
+            mode: Mode::Copy,
             conflict: Conflict::Replace,
             action: Action::Apply {
                 kind,

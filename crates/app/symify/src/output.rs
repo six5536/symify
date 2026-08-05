@@ -23,7 +23,7 @@ pub const EXIT_FAILURE: u8 = 2;
 fn mode_str(mode: Mode) -> &'static str {
     match mode {
         Mode::Symlink => "symlink",
-        Mode::Sync => "sync",
+        Mode::Copy => "copy",
     }
 }
 
@@ -66,7 +66,7 @@ struct RunEntryJson {
     action: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     detail: Option<String>,
-    /// Files copied (`sync` mode).
+    /// Files copied (`copy` mode).
     copied: usize,
     /// Files backed up before an overwrite.
     backed_up: usize,
@@ -674,7 +674,7 @@ mod tests {
             ),
             planned(
                 "push",
-                Mode::Sync,
+                Mode::Copy,
                 Action::Apply {
                     kind: Push,
                     ops: vec![copy("push"), FsOp::Backup("/store/push".into())],
@@ -682,7 +682,7 @@ mod tests {
             ),
             planned(
                 "pull",
-                Mode::Sync,
+                Mode::Copy,
                 Action::Apply {
                     kind: Pull,
                     ops: vec![copy("pull")],
@@ -690,15 +690,15 @@ mod tests {
             ),
             planned(
                 "drifted",
-                Mode::Sync,
+                Mode::Copy,
                 Action::ApplyDrift {
                     kind: Push,
                     ops: vec![copy("drifted"), FsOp::Remove("/store/old".into())],
                 },
             ),
             planned("clean", Mode::Symlink, Action::AlreadyOk),
-            planned("skipped", Mode::Sync, Action::Skip("nothing to do")),
-            planned("conflicted", Mode::Sync, Action::Conflict),
+            planned("skipped", Mode::Copy, Action::Skip("nothing to do")),
+            planned("conflicted", Mode::Copy, Action::Conflict),
             planned("off", Mode::Symlink, Action::Disabled),
             planned("broken", Mode::Symlink, Action::Failed("boom".into())),
         ];
@@ -759,7 +759,7 @@ mod tests {
         assert_eq!(push["backed_up"], 1);
         assert_eq!(push["removed"], 0);
         assert_eq!(push["drift"], false);
-        assert_eq!(push["mode"], "sync");
+        assert_eq!(push["mode"], "copy");
 
         // drifted: applied-drift carries copied + removed and drift=true.
         let drifted = entries.iter().find(|e| e["key"] == "drifted").unwrap();
@@ -781,7 +781,7 @@ mod tests {
 
     #[test]
     fn run_json_failure_outranks_drift_in_exit() {
-        let p = vec![planned("x", Mode::Sync, Action::Failed("nope".into()))];
+        let p = vec![planned("x", Mode::Copy, Action::Failed("nope".into()))];
         let o = vec![Outcome::Failed("nope".into())];
         let mut buf = Vec::new();
         let code = render_run(&mut buf, Verb::Deploy, false, &p, &o, true).unwrap();
@@ -808,9 +808,9 @@ mod tests {
             mk("unadopted", Mode::Symlink, StatusLabel::Unadopted),
             mk("wrong", Mode::Symlink, StatusLabel::WrongTarget),
             mk("live-missing", Mode::Symlink, StatusLabel::LiveMissing),
-            mk("store-missing", Mode::Sync, StatusLabel::StoreMissing),
+            mk("store-missing", Mode::Copy, StatusLabel::StoreMissing),
             mk("missing", Mode::Symlink, StatusLabel::Missing),
-            mk("differs", Mode::Sync, StatusLabel::Differs),
+            mk("differs", Mode::Copy, StatusLabel::Differs),
             mk(
                 "broken",
                 Mode::Symlink,

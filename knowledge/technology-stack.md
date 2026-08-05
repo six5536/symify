@@ -32,7 +32,7 @@ time, per the dependency policy. The current set:
 - **Rust**: `clap` (derive), `clap_complete` + `clap_mangen` (completions and
   man page generated from the same clap definition), `serde`, `serde_json`,
   `toml`, `toml_edit` (format-preserving config edits), `thiserror`,
-  `directories` (Windows-aware home/dirs), `blake3` (`sync`-mode content
+  `directories` (Windows-aware home/dirs), `blake3` (`copy`-mode content
   equality).
 - **Rust (dev)**: `tempfile`, `assert_cmd` for CLI tests, `insta` for
   snapshot assertions on human output.

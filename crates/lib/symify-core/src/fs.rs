@@ -107,7 +107,7 @@ pub fn dir_entries(path: &Path) -> Result<BTreeSet<OsString>> {
     Ok(names)
 }
 
-/// Fast structural equality for `sync`-mode entries: a stat-only walk comparing
+/// Fast structural equality for `copy`-mode entries: a stat-only walk comparing
 /// each node's `(kind, len for files, perm bits, mtime within `modify_window`)`,
 /// short-circuiting on the first difference. Directories are compared by their
 /// (artifact-filtered) entry-name set, then recursively. Symlinks are compared
@@ -167,7 +167,7 @@ pub fn content_equal(a: &Path, b: &Path) -> Result<bool> {
     equal(a, b, false)
 }
 
-/// Exact content compare for `sync`-mode entries (the `--checksum` path): like
+/// Exact content compare for `copy`-mode entries (the `--checksum` path): like
 /// [`content_equal`] but also requires identical permission bits at every node.
 /// Both sides are independent real files and the mode is part of their identity.
 pub fn checksum_equal(a: &Path, b: &Path) -> Result<bool> {

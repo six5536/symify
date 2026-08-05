@@ -54,20 +54,19 @@ name *locations*, never roles.
 | `deploy` | `store` → `live` | Install the store onto a machine. |
 | `status` | read-only        | Report per-entry state; never mutates. |
 
-**Modes — mechanism** (`mode = symlink | sync`):
+**Modes — mechanism** (`mode = symlink | copy`):
 
 - `symlink` (default) — a symbolic link at `live` pointing to the file in
   `store`.
-- `sync` — an independent content **copy** (no link), kept up to date
-  incrementally (rsync-style: only changed files are copied). The mode name
-  collides with the `sync` verb; the two are orthogonal and the collision is
-  accepted.
+- `copy` — an independent content **copy** (no link), kept up to date
+  incrementally (rsync-style: only changed files are copied). Named `sync`
+  before PLAN-008 renamed it to end the collision with the `sync` verb.
 
-`sync`-mode copies are governed by two per-run flags: `--checksum` (exact
+`copy`-mode copies are governed by two per-run flags: `--checksum` (exact
 content compare instead of size+mtime) and `--modify-window <SECONDS>` (mtime
 tolerance for coarse filesystems). The copy is **additive** — only changed
 files are copied, and destination-only files are never deleted. See
-[sync mode](#sync-mode-incremental-copy).
+[copy mode](#copy-mode-incremental).
 
 Flag-to-verb assignments and output forms are in
 [api-contracts](api-contracts.md).
@@ -98,7 +97,7 @@ the [correctness tests](#correctness-tests).
 
 ## `sync` (live → store)
 
-| `S` (live) | `D` (store) | `symlink` | `sync` (copy) |
+| `S` (live) | `D` (store) | `symlink` | `copy` |
 |---|---|---|---|
 | missing | any | nothing to push → skip | nothing to push → skip |
 | real file | missing | **adopt**: move `S`→`D`, then link `S`→`D` | copy `S`→`D` (`S` stays a real file) |
@@ -107,8 +106,8 @@ the [correctness tests](#correctness-tests).
 | already a correct link → `D` | exists | AlreadyOk | — |
 | copy matching `D` | exists | — | AlreadyOk |
 
-For `sync`-mode **directories** the copy is a per-file diff, not a whole-tree
-recopy — see [sync mode](#sync-mode-incremental-copy) for adds and the
+For `copy`-mode **directories** the copy is a per-file diff, not a whole-tree
+recopy — see [copy mode](#copy-mode-incremental) for adds and the
 partial-apply/drift rule.
 
 The "same content" relink case applies when the live file already matches the
@@ -138,8 +137,8 @@ The `conflict` setting selects the policy for that overwrite:
   then write. Timestamp format `YYYYMMDDHHMMSS`.
 
 Once a `symlink` entry is established, `S` is a link with no independent
-content, so `sync` is a no-op for it (edits flow through to `D`). `sync`-mode
-(copy) entries have real bytes on both sides, so `sync` and `deploy` remain
+content, so `sync` is a no-op for it (edits flow through to `D`). `copy`-mode
+entries have real bytes on both sides, so `sync` and `deploy` remain
 meaningful in both directions.
 
 # Link resolution
@@ -170,9 +169,9 @@ the store-side path (real content).
 ## Directory entries
 
 A key may resolve to a directory. In `symlink` mode it is linked **as a whole
-unit** (one link to the entire directory). In `sync` mode the directory is
+unit** (one link to the entire directory). In `copy` mode the directory is
 kept in sync by a **per-file diff** (see
-[sync mode](#sync-mode-incremental-copy)): only changed files are copied;
+[copy mode](#copy-mode-incremental)): only changed files are copied;
 destination-only files are left untouched (additive). Stow-style per-file
 folding (one link per file) is out of scope for v1.
 
@@ -183,7 +182,7 @@ An entry is AlreadyOk (no-op) when:
 - `symlink`: `S` is a symlink whose **resolved** target equals `D`
   (canonicalize and compare, so an equivalent spelling isn't needlessly
   rewritten). Symlinks are written with **absolute** targets.
-- `sync`: by default a fast **size + mtime + permission-bits** quick-check per
+- `copy`: by default a fast **size + mtime + permission-bits** quick-check per
   file (rsync's default), recursing over a directory's entries. mtime is
   **preserved on copy**, so the check is stable across runs. `--checksum`
   forces an exact BLAKE3 content compare instead; `--modify-window <SECONDS>`
@@ -193,15 +192,15 @@ An entry is AlreadyOk (no-op) when:
   with the executor, which recreates them verbatim; a dangling link is handled
   gracefully.
 
-Permission bits are part of identity only for `sync` (copy) mode, where both
+Permission bits are part of identity only for `copy` mode, where both
 sides are independent real files. In `symlink` mode the real file lives in
 `store` and keeps its own mode; the relink decision for an already-matching
 live file compares content only (the live file is about to become a link, so
 its mode is discarded).
 
-## sync mode (incremental copy)
+## copy mode (incremental)
 
-`sync`-mode entries are diffed **in the pure planner**, which emits per-file
+`copy`-mode entries are diffed **in the pure planner**, which emits per-file
 `Copy`/`Backup`/`Remove` ops — so `--dry-run`, `status`, and the
 delete-confirmation gate all see the real per-file work. For a directory the
 planner walks source against destination:

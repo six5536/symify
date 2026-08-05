@@ -11,6 +11,14 @@ publish a version it cannot find a heading for.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the `sync` mode is renamed to `copy`, ending the name
+  collision with the `sync` verb. `mode = "sync"` in a config now fails to
+  load (`unknown variant 'sync', expected 'symlink' or 'copy'`) — change it
+  to `mode = "copy"`; behaviour is identical. The per-entry `mode` field in
+  `--json` output reports `"copy"` accordingly.
+
 ### Fixed
 
 - Piping output into a reader that stops early no longer crashes or invents an

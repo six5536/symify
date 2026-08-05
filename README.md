@@ -11,8 +11,8 @@ Adding a file takes one command:
 `symify ~/.zshrc` moves it into the repository and links it back, so it keeps
 working in place.
 
-It works two ways: **symlinks** (the default) or **file sync**, which keeps
-independent copies up to date on both sides.
+It works two ways: **symlinks** (the default) or **copies**, kept up to date
+incrementally on both sides.
 
 Managing dotfiles is a common use,
 but symify works just as well for any files or folders you want to mirror, back
@@ -88,7 +88,7 @@ aside to `<name>.<timestamp>.bak` before linking, so nothing is lost. Run
 [settings]
 live = "~"            # where links/copies appear
 store = "~/dotfiles"  # where the real content lives
-mode = "symlink"      # symlink | sync (sync = independent copy)
+mode = "symlink"      # symlink | copy (copy = independent copy, kept in sync)
 conflict = "backup"   # skip | replace (overwrite, no backup) | backup (.<timestamp>.bak)
 
 [mappings.dotfiles.links]
@@ -127,7 +127,7 @@ autocomplete and validation, and documents every field.
   `-c <file>` (repeatable; replaces the usual config locations) and creates a
   default config if none exists, so there's no separate `init`. `completions`
   reads no config and takes none of these.
-- In `sync` mode, `sync`/`deploy` copy only changed files (a size+mtime
+- In `copy` mode, `sync`/`deploy` copy only changed files (a size+mtime
   quick-check, with mtime preserved on copy). They are **additive** — they never
   delete, so if you remove a file from the source, delete the stale copy on the
   other side yourself (`rm` / `git rm`). Extra flags:

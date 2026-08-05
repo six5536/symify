@@ -99,7 +99,7 @@ Read-only, direction-neutral. Per entry it reports one `StatusLabel`, never
 claiming which direction you should run. The states behind the labels are the
 [architecture](architecture.md) state machine's.
 
-| Label | `symlink` | `sync` | Meaning |
+| Label | `symlink` | `copy` | Meaning |
 |---|---|---|---|
 | `ok` | ✓ | ✓ | A correct link; or, in copy mode, content in sync. |
 | `unadopted` | ✓ | — | `S` is a real file, not yet a link. |

@@ -29,7 +29,7 @@
           "description": "A symbolic link at the live path pointing to the real file in the store."
         },
         {
-          "const": "sync",
+          "const": "copy",
           "description": "An independent content copy, kept up to date incrementally (only changed files are copied)."
         }
       ]

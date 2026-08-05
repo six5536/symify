@@ -175,7 +175,7 @@ pub fn render_starter(live: &str, store: &str) -> String {
 [settings]
 live = "{live}"          # where your files are used
 store = "{store}"        # where the real content is kept (commit this to git)
-mode = "symlink"         # symlink | sync (sync = independent copy)
+mode = "symlink"         # symlink | copy (copy = independent copy, kept in sync)
 conflict = "backup"      # skip | replace (overwrite, no backup) | backup (.<timestamp>.bak)
 
 # Each entry maps a path (relative to `live`) to how it lives in `store`:
@@ -427,6 +427,17 @@ mod tests {
     }
 
     #[test]
+    fn sync_mode_is_rejected() {
+        // `mode = "sync"` was renamed to `"copy"` (PLAN-008, hard break); an
+        // old config must fail to load, and the error names the valid variants.
+        let err = toml::from_str::<Config>("[settings]\nmode = \"sync\"\n").unwrap_err();
+        assert!(
+            err.to_string().contains("unknown variant"),
+            "expected unknown-variant rejection, got: {err}"
+        );
+    }
+
+    #[test]
     fn settings_merge_per_key() {
         let merged = merge_all(&[
             r#"[settings]
@@ -434,13 +445,13 @@ mod tests {
             store = "~/dotfiles"
             mode = "symlink""#,
             r#"[settings]
-            mode = "sync"
+            mode = "copy"
             conflict = "skip""#,
         ]);
         let s = merged.settings.unwrap();
         assert_eq!(s.live.as_deref(), Some("~")); // kept from doc 1
         assert_eq!(s.store.as_deref(), Some("~/dotfiles")); // kept from doc 1
-        assert_eq!(s.mode, Some(Mode::Sync)); // overridden by doc 2
+        assert_eq!(s.mode, Some(Mode::Copy)); // overridden by doc 2
         assert_eq!(s.conflict, Some(Conflict::Skip)); // added by doc 2
     }
 
@@ -450,14 +461,14 @@ mod tests {
             r#"[mappings.a.links]
             x = true"#,
             r#"[mappings.a]
-            mode = "sync"
+            mode = "copy"
             [mappings.a.links]
             y = ""
             [mappings.b.links]
             z = true"#,
         ]);
         let a = &merged.mappings["a"];
-        assert_eq!(a.mode, Some(Mode::Sync)); // override applied
+        assert_eq!(a.mode, Some(Mode::Copy)); // override applied
         assert!(a.links.contains_key("x")); // combined
         assert!(a.links.contains_key("y"));
         assert!(merged.mappings.contains_key("b")); // distinct name accumulates
@@ -495,7 +506,7 @@ mod tests {
         let c = cfg(r#"[settings]
             live = "/live"
             store = "/store"
-            mode = "sync"
+            mode = "copy"
             [mappings.a]
             mode = "symlink"
             [mappings.a.links]

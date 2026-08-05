@@ -47,9 +47,9 @@ impl Fx {
             config,
         }
     }
-    /// A single `mode = "sync"` (copy) mapping with the given conflict policy
+    /// A single `mode = "copy"` mapping with the given conflict policy
     /// and link lines.
-    fn sync(conflict: &str, links: &[&str]) -> Self {
+    fn copy(conflict: &str, links: &[&str]) -> Self {
         let tmp = tempfile::tempdir().unwrap();
         let live = tmp.path().join("live");
         let store = tmp.path().join("store");
@@ -59,7 +59,7 @@ impl Fx {
         std::fs::write(
             &config,
             format!(
-                "[settings]\nlive = \"{}\"\nstore = \"{}\"\nmode = \"sync\"\nconflict = \"{conflict}\"\n\n[mappings.dotfiles.links]\n{}\n",
+                "[settings]\nlive = \"{}\"\nstore = \"{}\"\nmode = \"copy\"\nconflict = \"{conflict}\"\n\n[mappings.dotfiles.links]\n{}\n",
                 live.display(),
                 store.display(),
                 links.join("\n"),
@@ -574,11 +574,11 @@ fn auto_init_with_json_keeps_stdout_clean() {
         .unwrap_or_else(|e| panic!("stdout not clean JSON ({e}): {stdout}"));
 }
 
-// ----- sync (copy) mode: incremental, checksum -------------------------
+// ----- copy mode: incremental, checksum ---------------------------------
 
 #[test]
 fn sync_copy_touches_only_changed_files() {
-    let fx = Fx::sync("backup", &["\"conf\" = true"]);
+    let fx = Fx::copy("backup", &["\"conf\" = true"]);
     fx.write(&fx.lp("conf/a"), b"a");
     fx.write(&fx.lp("conf/b"), b"b");
 
@@ -611,7 +611,7 @@ fn sync_copy_touches_only_changed_files() {
 
 #[test]
 fn sync_checksum_skips_recopy_on_mtime_only_change() {
-    let fx = Fx::sync("replace", &["\"f\" = true"]);
+    let fx = Fx::copy("replace", &["\"f\" = true"]);
     fx.write(&fx.lp("f"), b"content");
     fx.cmd("sync").assert().success();
 
@@ -654,7 +654,7 @@ fn sync_checksum_skips_recopy_on_mtime_only_change() {
 
 #[test]
 fn sync_skip_partial_apply_reports_drift_exit_1() {
-    let fx = Fx::sync("skip", &["\"conf\" = true"]);
+    let fx = Fx::copy("skip", &["\"conf\" = true"]);
     fx.write(&fx.lp("conf/a"), b"a");
     fx.cmd("sync").assert().success();
 
@@ -671,3 +671,4 @@ fn sync_skip_partial_apply_reports_drift_exit_1() {
         "additive copy applied under skip"
     );
 }
+

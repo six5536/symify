@@ -35,7 +35,7 @@ later without touching the planner.
 |----------|----------------|
 | `config` | Source discovery, merge order, TOML parse, `~`/env expansion, apply `[settings]` defaults into each mapping; auto-init; mapping selection. |
 | `edit`   | Format-preserving config edits (`toml_edit`) for `add`/`remove`. |
-| `model`  | Config types **generated** from the JSON Schema; plus `Mode { Symlink, Sync }`, `Conflict { Skip, Replace, Backup }`. |
+| `model`  | Config types **generated** from the JSON Schema; plus `Mode { Symlink, Copy }`, `Conflict { Skip, Replace, Backup }`. |
 | `plan`   | Pure planner. Resolves the merged config + FS state into an ordered `Vec<Action>` per verb. No mutation. |
 | `fs`     | Executor + the platform abstraction for link/copy/move/backup. Apply `Action`s. |
 | `status` | Derive per-entry status labels from the plan. |

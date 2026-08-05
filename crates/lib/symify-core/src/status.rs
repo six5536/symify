@@ -115,7 +115,7 @@ fn label_for(s: &Path, d: &Path, mode: Mode, opts: RunOptions) -> Result<StatusL
                 (_, false) => StatusLabel::Unadopted,
             })
         }
-        Mode::Sync => Ok(match (s_state.is_missing(), d_state.is_missing()) {
+        Mode::Copy => Ok(match (s_state.is_missing(), d_state.is_missing()) {
             (true, true) => StatusLabel::Missing,
             (false, true) => StatusLabel::StoreMissing,
             (true, false) => StatusLabel::LiveMissing,
@@ -239,7 +239,7 @@ mod tests {
         std::fs::write(fx.sp("a"), b"x").unwrap();
         match_mtime(&fx.lp("a"), &fx.sp("a")); // in-sync: same content, size, mtime
         assert_eq!(
-            label(&fx.cfg(Mode::Sync, vec![("a", t())])),
+            label(&fx.cfg(Mode::Copy, vec![("a", t())])),
             StatusLabel::Ok
         );
 
@@ -247,13 +247,13 @@ mod tests {
         std::fs::write(fx.lp("b"), b"one").unwrap();
         std::fs::write(fx.sp("b"), b"a-longer-value").unwrap();
         assert_eq!(
-            label(&fx.cfg(Mode::Sync, vec![("b", t())])),
+            label(&fx.cfg(Mode::Copy, vec![("b", t())])),
             StatusLabel::Differs
         );
 
         std::fs::write(fx.lp("c"), b"x").unwrap();
         assert_eq!(
-            label(&fx.cfg(Mode::Sync, vec![("c", t())])),
+            label(&fx.cfg(Mode::Copy, vec![("c", t())])),
             StatusLabel::StoreMissing
         );
     }

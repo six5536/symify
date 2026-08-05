@@ -295,7 +295,7 @@ impl ::std::default::Default for Mapping {
 #[doc = "    },"]
 #[doc = "    {"]
 #[doc = "      \"description\": \"An independent content copy, kept up to date incrementally (only changed files are copied).\","]
-#[doc = "      \"const\": \"sync\""]
+#[doc = "      \"const\": \"copy\""]
 #[doc = "    }"]
 #[doc = "  ]"]
 #[doc = "}"]
@@ -318,14 +318,14 @@ pub enum Mode {
     #[serde(rename = "symlink")]
     Symlink,
     #[doc = "An independent content copy, kept up to date incrementally (only changed files are copied)."]
-    #[serde(rename = "sync")]
-    Sync,
+    #[serde(rename = "copy")]
+    Copy,
 }
 impl ::std::fmt::Display for Mode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Symlink => f.write_str("symlink"),
-            Self::Sync => f.write_str("sync"),
+            Self::Copy => f.write_str("copy"),
         }
     }
 }
@@ -334,7 +334,7 @@ impl ::std::str::FromStr for Mode {
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
             "symlink" => Ok(Self::Symlink),
-            "sync" => Ok(Self::Sync),
+            "copy" => Ok(Self::Copy),
             _ => Err("invalid value".into()),
         }
     }
