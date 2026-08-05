@@ -97,7 +97,7 @@ Documentation is gated in CI, so keep it green:
   intra-doc links, no stray HTML).
 - Rustdoc examples run as doctests (`cargo test --doc`).
 - **The code is the canonical reference.** README, CLI `--help`, schema
-  descriptions, and `specs/ARCHITECTURE.md` all describe actual behaviour; when a
+  descriptions, and the `knowledge/` bundle all describe actual behaviour; when a
   doc disagrees with the code, fix the doc.
 
 ## Tests
@@ -105,7 +105,7 @@ Documentation is gated in CI, so keep it green:
 symify uses real temp directories (`tempfile`), not a mocked filesystem — its
 whole job is real filesystem semantics. Tests run under `cargo-nextest`, which
 gives per-test process isolation. The layers (see
-[ARCHITECTURE → Testing](specs/ARCHITECTURE.md#testing)):
+[testing-strategy](knowledge/testing-strategy.md)):
 
 - **Planner unit tests** — the bulk; the per-entry state machine is the matrix.
 - **Executor / library integration** — lay down a live + store tree, run through
@@ -122,7 +122,8 @@ gives per-test process isolation. The layers (see
 - `crates/app/symify` — the binary: CLI parsing, wiring, output rendering.
 - `packages/` — the npm launcher and per-platform prebuilt-binary packages.
 - `schema/` — the JSON Schema source of truth.
-- `specs/ARCHITECTURE.md` — the design overview.
+- `knowledge/` — the AOKF knowledgebase: canonical project knowledge,
+  including the design overview (see `AGENTS.md`).
 - `plans/PLAN-NNN-*.md` — working plans for changes, kept as a record once landed
   (retained permanently, not deleted).
 
@@ -130,7 +131,7 @@ gives per-test process isolation. The layers (see
 
 - Use [Conventional Commits](https://www.conventionalcommits.org/) for messages
   (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`).
-- Keep PRs focused; update `specs/`/`plans/` when behaviour or design changes.
+- Keep PRs focused; update `knowledge/`/`plans/` when behaviour or design changes.
 - Make sure the full check list above passes. CI runs tests on macOS and the
   coverage gate on Linux.
 

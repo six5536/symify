@@ -3,7 +3,7 @@
 //! Pipeline: [`discover`] picks the file list, [`load`] parses and merges them
 //! into one [`Config`], and [`resolve`] expands paths and applies defaults to
 //! produce a [`ResolvedConfig`] the planner can consume. [`load_config`] runs all
-//! three. See `specs/ARCHITECTURE.md` (Configuration).
+//! three. See `knowledge/configuration.md`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

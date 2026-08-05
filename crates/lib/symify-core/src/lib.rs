@@ -1,6 +1,6 @@
 //! symify core: config loading, planning, and filesystem execution.
 //!
-//! See `specs/ARCHITECTURE.md` for the design. The crate is layered:
+//! See `knowledge/architecture.md` for the design. The crate is layered:
 //! [`config`] loads and merges TOML into a resolved model, [`mod@plan`] turns
 //! that plus current filesystem state into a pure list of actions, and the
 //! executor applies them. The planner never mutates the filesystem.

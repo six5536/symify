@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/six5536/symify/schema/symify.schema.json",
   "title": "Config",
-  "description": "symify configuration — a single symify.toml / conf.d/*.toml file. Source of truth for both the Rust config types (via typify) and editor TOML validation. See specs/ARCHITECTURE.md.",
+  "description": "symify configuration — a single symify.toml / conf.d/*.toml file. Source of truth for both the Rust config types (via typify) and editor TOML validation. See knowledge/configuration.md.",
   "type": "object",
   "additionalProperties": false,
   "properties": {

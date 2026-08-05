@@ -8,10 +8,19 @@ sources:
   - id: prose
     resource: /.agents/PROSE.md
     title: Prose rules
+  - id: coding
+    resource: /.agents/CODING.md
+    title: Coding behaviour rules
   - id: contributing
     resource: /CONTRIBUTING.md
     title: Contributing guide (documentation expectations)
 ---
+
+# Approach
+
+The behavioural rules are in [CODING.md](/.agents/CODING.md): think before
+coding, simplicity first, surgical changes only, and verifiable success
+criteria defined before executing.
 
 # Prose
 

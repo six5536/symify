@@ -4,7 +4,7 @@
 //! reads the filesystem but never mutates it, emitting an ordered list of
 //! [`Planned`] entries. Each entry's [`Action`] either records a no-op/blocked
 //! state or carries the exact ordered [`FsOp`]s the executor will run. The
-//! per-entry state machine is documented in `specs/ARCHITECTURE.md`.
+//! per-entry state machine is documented in `knowledge/architecture.md`.
 
 use std::path::{Path, PathBuf};
 
@@ -268,7 +268,7 @@ fn plan_entry(
     let (s, d) = resolve_paths(m, key, kind);
 
     // Safety guards: refuse entries that could swallow a root or operate on a
-    // directory outside the live root. See `specs/ARCHITECTURE.md` (Safety).
+    // directory outside the live root. See `knowledge/architectural-rules.md`.
     if let Some(reason) = guard_reason(m, &s, &d)? {
         return Ok(make(s, d, Action::Failed(reason)));
     }

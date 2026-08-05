@@ -29,7 +29,7 @@ pub mod error {
         }
     }
 }
-#[doc = "symify configuration — a single symify.toml / conf.d/*.toml file. Source of truth for both the Rust config types (via typify) and editor TOML validation. See specs/ARCHITECTURE.md."]
+#[doc = "symify configuration — a single symify.toml / conf.d/*.toml file. Source of truth for both the Rust config types (via typify) and editor TOML validation. See knowledge/configuration.md."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
@@ -37,7 +37,7 @@ pub mod error {
 #[doc = "{"]
 #[doc = "  \"$id\": \"https://github.com/six5536/symify/schema/symify.schema.json\","]
 #[doc = "  \"title\": \"Config\","]
-#[doc = "  \"description\": \"symify configuration — a single symify.toml / conf.d/*.toml file. Source of truth for both the Rust config types (via typify) and editor TOML validation. See specs/ARCHITECTURE.md.\","]
+#[doc = "  \"description\": \"symify configuration — a single symify.toml / conf.d/*.toml file. Source of truth for both the Rust config types (via typify) and editor TOML validation. See knowledge/configuration.md.\","]
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"properties\": {"]
 #[doc = "    \"mappings\": {"]
