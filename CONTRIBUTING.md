@@ -1,9 +1,9 @@
 # Contributing to symify
 
-Thanks for your interest in symify. This guide covers the development setup, the
-day-to-day workflow, and how a release is cut.
+How to get set up, what to run before you push, and how a release is cut.
 
-> Status: not released. Breaking changes are allowed.
+> Status: released, pre-1.0. Minor versions may contain breaking changes, and
+> `symify-core`'s API is not stable yet.
 
 ## Prerequisites
 
@@ -12,13 +12,19 @@ Toolchains are pinned and managed with [mise](https://mise.jdx.dev/):
 - `rust-toolchain.toml` pins the project toolchain (`1.96.0`, with `rustfmt` and
   `clippy`).
 - `.mise.toml` pins everything else: Node, a `nightly` Rust used only by the
-  coverage job, and the cargo tools (`cargo-nextest`, `cargo-llvm-cov`,
-  `cargo-typify`, `cargo-zigbuild`).
+  coverage job, `zig` (the cross C compiler behind `cargo-zigbuild`, whose
+  version the release workflow reads straight out of this file), and the cargo
+  tools (`cargo-nextest`, `cargo-llvm-cov`, `cargo-typify`, `cargo-zigbuild`).
 
 ```sh
 mise install     # install all pinned tools
 npm install      # install the JS workspace (the launcher package)
 ```
+
+Use `npm install`, not `npm ci`: the launcher pins the current version of
+every platform package, and until a release has published that version for a
+newly added platform (`@six5536/symify-win32-x64` at present) the lockfile
+cannot carry a resolved entry for it, which `npm ci` treats as fatal.
 
 A plain `cargo build` needs neither Node nor `typify` — the generated config
 model is checked in. Node is only needed for the npm packages and the codegen
@@ -30,7 +36,8 @@ All wrapped as npm scripts (see `package.json`):
 
 ```sh
 npm run build           # cargo build --workspace
-npm run test            # cargo nextest run --workspace
+npm run test            # cargo nextest run --workspace, then check:aokf
+npm run check:aokf      # validate the knowledge/ AOKF bundle
 npm run lint            # cargo clippy --workspace
 npm run fmt             # cargo fmt --all
 npm run check           # cargo check --workspace --tests
@@ -44,17 +51,18 @@ npm run coverage:check   # enforce the gate: line coverage >= 90% per crate
 
 npm run test:launcher   # node test for the npm launcher shim
 
-npm run verify-version  # every version in the tree agrees (14 locations)
+npm run verify-version  # every version in the tree agrees (16 locations)
 npm run release <ver>   # bump + verify + commit + tag (does not push)
 ```
 
-Only the launcher (`packages/symify`) is an npm workspace. The four
+Only the launcher (`packages/symify`) is an npm workspace. The five
 platform-binary packages deliberately are not: npm enforces their `os`/`cpu`
 fields on workspace members unconditionally, so including them made a plain
 `npm install` fail with `EBADPLATFORM` on every host. Nothing needs them to be
-members — `set-version` and the release workflow address them by path.
+members. `set-version` and the release workflow address them by path.
 
-Before opening a PR, the same checks CI runs should pass locally:
+Before opening a PR, run everything CI runs. Note that `npm run lint` is only
+`cargo clippy --workspace` — CI is stricter, so use the full command here:
 
 ```sh
 cargo fmt --all -- --check
@@ -63,7 +71,14 @@ cargo nextest run --workspace
 cargo test --doc --workspace
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 npm run codegen:check
+npm run test:launcher
+npm run verify-version
+npm run check:aokf
+npm run coverage:check     # slow; needs the nightly toolchain
 ```
+
+`cargo-deny check licenses bans sources` also gates CI, but only fails when you
+change dependencies.
 
 ## Config schema and codegen
 
@@ -77,8 +92,8 @@ Schema at `schema/symify.schema.json`. It drives two things:
 2. Editor TOML validation (taplo / VS Code).
 
 If you change the schema, run `npm run codegen` and commit the regenerated Rust.
-Add a `description` to every new field/variant — it becomes both rustdoc and an
-editor tooltip.
+Give every new field and variant a `description`; it becomes both the rustdoc and
+the editor tooltip.
 
 ## Documentation expectations
 
@@ -89,7 +104,7 @@ Documentation is gated in CI, so keep it green:
   intra-doc links, no stray HTML).
 - Rustdoc examples run as doctests (`cargo test --doc`).
 - **The code is the canonical reference.** README, CLI `--help`, schema
-  descriptions, and `specs/ARCHITECTURE.md` all describe actual behavior; when a
+  descriptions, and the `knowledge/` bundle all describe actual behaviour; when a
   doc disagrees with the code, fix the doc.
 
 ## Tests
@@ -97,7 +112,7 @@ Documentation is gated in CI, so keep it green:
 symify uses real temp directories (`tempfile`), not a mocked filesystem — its
 whole job is real filesystem semantics. Tests run under `cargo-nextest`, which
 gives per-test process isolation. The layers (see
-[ARCHITECTURE → Testing](specs/ARCHITECTURE.md#testing)):
+[testing-strategy](knowledge/testing-strategy.md)):
 
 - **Planner unit tests** — the bulk; the per-entry state machine is the matrix.
 - **Executor / library integration** — lay down a live + store tree, run through
@@ -114,7 +129,8 @@ gives per-test process isolation. The layers (see
 - `crates/app/symify` — the binary: CLI parsing, wiring, output rendering.
 - `packages/` — the npm launcher and per-platform prebuilt-binary packages.
 - `schema/` — the JSON Schema source of truth.
-- `specs/ARCHITECTURE.md` — the design overview.
+- `knowledge/` — the AOKF knowledgebase: canonical project knowledge,
+  including the design overview (see `AGENTS.md`).
 - `plans/PLAN-NNN-*.md` — working plans for changes, kept as a record once landed
   (retained permanently, not deleted).
 
@@ -122,14 +138,14 @@ gives per-test process isolation. The layers (see
 
 - Use [Conventional Commits](https://www.conventionalcommits.org/) for messages
   (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`).
-- Keep PRs focused; update `specs/`/`plans/` when behavior or design changes.
-- Make sure the full check list above passes. CI runs tests on macOS and the
-  coverage gate on Linux.
+- Keep PRs focused; update `knowledge/`/`plans/` when behaviour or design changes.
+- Make sure the full check list above passes. CI runs tests on macOS and
+  Windows, and the coverage gate on Linux.
 
 ## Dependencies
 
-Adding a dependency needs a clear reason — prefer the standard library or
-existing crates first. When you do add one, use the latest version at the time.
+Adding a dependency needs a clear reason. Reach for the standard library or a
+crate already in the tree first. When you do add one, take the latest version.
 
 ## Releasing
 
@@ -138,8 +154,8 @@ tag).
 
 **1. Write the changelog.** Add a `## [X.Y.Z]` section to `CHANGELOG.md`
 (promote `[Unreleased]` if that is where the notes already are). This is not
-optional — both `npm run release` and the release workflow refuse a version they
-cannot find a section for, and the section becomes the GitHub release notes.
+optional. Both `npm run release` and the release workflow refuse a version they
+cannot find a section for, and that section becomes the GitHub release notes.
 
 **2. Cut the release commit and tag.**
 
@@ -148,7 +164,7 @@ npm run release X.Y.Z
 ```
 
 That sets the version everywhere in lockstep (Cargo workspace, the internal
-`symify-core` pin, all five `package.json` files, and **both lockfiles**),
+`symify-core` pin, all six `package.json` files, and **both lockfiles**),
 verifies it landed consistently, then commits and tags. It deliberately stops
 there.
 
@@ -167,8 +183,8 @@ Pushing the tag is what triggers the publish, and publishes cannot be undone
 1. `meta` — the tag must match every version in the tree and have a changelog
    section.
 2. `checks` — the full CI gate, via the shared reusable workflow.
-3. `build` — cross-build four binaries (`cargo-zigbuild` for the static-musl
-   Linux targets, native `cargo` on macOS) and assert the Linux ones are static.
+3. `build` — build five binaries (`cargo-zigbuild` for the static-musl
+   Linux targets, native `cargo` on macOS and Windows) and assert the Linux ones are static.
 4. `publish` — smoke-test the binary, dry-run every publish, then publish the
    platform packages, then the launcher, then
    `cargo publish --workspace --locked`.
@@ -180,23 +196,40 @@ is marked as a prerelease on GitHub, so it never becomes `latest`.
 
 ### Publishing credentials
 
-npm uses **trusted publishing (OIDC)** — there is no npm token. The workflow's
+npm uses **trusted publishing (OIDC)**, so there is no npm token. The workflow's
 `id-token: write` permission is the credential, and each package has a trusted
-publisher configured on npmjs.com pointing at this repository and
-`release.yml`. Provenance is generated automatically as a result.
+publisher configured on npmjs.com pointing at this repository and `release.yml`.
+Provenance is generated automatically as a result.
 
 This is also why the packages carry a `0.0.0` placeholder version: a trusted
 publisher can only be attached to a package that already exists, so the names
 were reserved with an empty publish before the first real release. Don't
-unpublish those — removing a package's only version can delete the package and
-its trusted-publisher configuration with it.
+unpublish those. Removing a package's only version can take the package and its
+trusted-publisher configuration with it.
 
 crates.io still uses a token (`CARGO_REGISTRY_TOKEN`); it does not require a
 one-time password, so it works unattended.
+
+### Adding a platform package
+
+A new `@six5536/symify-<os>-<cpu>` package needs setup **before** the release
+that first ships it:
+
+1. Publish a `0.0.0` placeholder by hand (see above — one `npm publish` of the
+   new package with an OTP), so the name exists.
+2. Attach a trusted publisher to it on npmjs.com, pointing at this repository
+   and `release.yml`. Without this the release's publish step fails.
+3. Add the package to the launcher's `optionalDependencies` and the release
+   workflow's build matrix and publish loops. (`verify-version` discovers
+   `packages/*` itself — no change needed there.)
+
+Until the next release publishes a real version, `npm ci` fails on the new
+optional dependency (the `npm install` note under Prerequisites). That window
+is expected; land the change and the release together or in quick succession.
 
 ### Version consistency
 
 `npm run verify-version [version]` checks that the Cargo workspace, the
 `symify-core` pin, every `package.json`, the launcher's `optionalDependencies`,
-`Cargo.lock` and `package-lock.json` all agree — 14 locations in total. It runs
-in CI and again against the tag at release time.
+`Cargo.lock` and `package-lock.json` all agree. That is 16 locations. It runs in
+CI and again against the tag at release time.

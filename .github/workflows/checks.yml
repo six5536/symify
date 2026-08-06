@@ -18,12 +18,14 @@ permissions:
 jobs:
   test:
     # ubuntu is covered by the `coverage` job below (it runs the full suite while
-    # measuring), so the plain matrix only needs the cross-platform macos check.
+    # measuring), so the plain matrix needs the cross-platform macos and windows
+    # checks. Windows runs tests and doctests only — lint, docs, launcher, and
+    # repo checks are OS-independent and already run on macos.
     name: test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest]
+        os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -48,9 +50,11 @@ jobs:
           tool: cargo-nextest
 
       - name: Format
+        if: runner.os != 'Windows'
         run: cargo fmt --all -- --check
 
       - name: Clippy
+        if: runner.os != 'Windows'
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Test
@@ -60,15 +64,22 @@ jobs:
         run: cargo test --doc --workspace --locked
 
       - name: Docs (warnings as errors)
+        if: runner.os != 'Windows'
         run: cargo doc --workspace --no-deps --locked
         env:
           RUSTDOCFLAGS: -D warnings
 
       - name: Launcher test
+        if: runner.os != 'Windows'
         run: node --test packages/symify/test/*.test.js
 
       - name: Version consistency
+        if: runner.os != 'Windows'
         run: node scripts/verify-version.mjs
+
+      - name: Knowledgebase validation
+        if: runner.os != 'Windows'
+        run: npm run check:aokf
 
   coverage:
     # Runs the full test suite on ubuntu under instrumentation and enforces the

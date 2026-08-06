@@ -50,6 +50,8 @@ impl Fx {
                     .iter()
                     .map(|(k, v)| (k.to_string(), v.clone()))
                     .collect(),
+                inactive: None,
+                backup_keep: 0,
             }],
         }
     }
@@ -199,6 +201,8 @@ fn continue_on_error_processes_all_entries() {
     assert_eq!(std::fs::read(fx.sp("f")).unwrap(), b"file");
 }
 
+// Permission bits are Unix semantics; not meaningful on Windows.
+#[cfg(unix)]
 #[test]
 fn sync_copy_mode_preserves_and_tracks_permission_bits() {
     use std::os::unix::fs::PermissionsExt;
@@ -206,7 +210,7 @@ fn sync_copy_mode_preserves_and_tracks_permission_bits() {
     fx.write(&fx.lp("script.sh"), b"#!/bin/sh\necho hi\n");
     std::fs::set_permissions(fx.lp("script.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
     let cfg = fx.cfg(
-        Mode::Sync,
+        Mode::Copy,
         Conflict::Backup,
         &[("script.sh", LinkValue::Boolean(true))],
     );
@@ -237,7 +241,7 @@ fn sync_copy_mode_roundtrips_directory() {
     fx.write(&fx.lp("conf/a.toml"), b"a");
     fx.write(&fx.lp("conf/sub/b.toml"), b"b");
     let cfg = fx.cfg(
-        Mode::Sync,
+        Mode::Copy,
         Conflict::Backup,
         &[("conf", LinkValue::Boolean(true))],
     );
@@ -259,4 +263,61 @@ fn sync_copy_mode_roundtrips_directory() {
         status(&cfg, RunOptions::default()).unwrap()[0].label,
         StatusLabel::Ok
     );
+}
+
+#[test]
+fn backup_keep_caps_timestamped_backups() {
+    let fx = Fx::new();
+    // Three prior backups, plus names the exact-pattern matcher must ignore.
+    fx.write(&fx.sp("x.20250101000000.bak"), b"old1");
+    fx.write(&fx.sp("x.20250102000000.bak"), b"old2");
+    fx.write(&fx.sp("x.20250103000000.bak"), b"old3");
+    fx.write(&fx.sp("x.bak"), b"hand-made");
+    fx.write(&fx.sp("x.2025.bak"), b"short-stamp");
+    fx.write(&fx.sp("y.20250101000000.bak"), b"other-entry");
+    fx.write(&fx.lp("x"), b"live-wins");
+    fx.write(&fx.sp("x"), b"old-store");
+
+    let mut cfg = fx.cfg(
+        Mode::Symlink,
+        Conflict::Backup,
+        &[("x", LinkValue::Boolean(true))],
+    );
+    cfg.mappings[0].backup_keep = 2;
+
+    run(&cfg, Verb::Sync); // conflict -> new backup at 20260101000000
+
+    // Newest two survive: the fresh backup and the newest prior one.
+    assert_eq!(
+        std::fs::read(fx.sp("x.20260101000000.bak")).unwrap(),
+        b"old-store"
+    );
+    assert!(fx.sp("x.20250103000000.bak").exists());
+    assert!(!fx.sp("x.20250102000000.bak").exists());
+    assert!(!fx.sp("x.20250101000000.bak").exists());
+
+    // Non-matching names and other entries' backups are invisible to retention.
+    assert!(fx.sp("x.bak").exists());
+    assert!(fx.sp("x.2025.bak").exists());
+    assert!(fx.sp("y.20250101000000.bak").exists());
+
+    // Idempotent: no new backup, so retention plans nothing.
+    assert_eq!(run(&cfg, Verb::Sync), vec![Outcome::AlreadyOk]);
+}
+
+#[test]
+fn backup_keep_absent_keeps_everything() {
+    let fx = Fx::new();
+    fx.write(&fx.sp("x.20250101000000.bak"), b"old");
+    fx.write(&fx.lp("x"), b"live");
+    fx.write(&fx.sp("x"), b"store");
+    let cfg = fx.cfg(
+        Mode::Symlink,
+        Conflict::Backup,
+        &[("x", LinkValue::Boolean(true))],
+    ); // backup_keep: 0 (unlimited)
+
+    run(&cfg, Verb::Sync);
+    assert!(fx.sp("x.20250101000000.bak").exists());
+    assert!(fx.sp("x.20260101000000.bak").exists());
 }

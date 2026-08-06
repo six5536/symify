@@ -29,7 +29,7 @@ pub mod error {
         }
     }
 }
-#[doc = "symify configuration — a single symify.toml / conf.d/*.toml file. Source of truth for both the Rust config types (via typify) and editor TOML validation. See specs/ARCHITECTURE.md."]
+#[doc = "symify configuration — a single symify.toml / conf.d/*.toml file. Source of truth for both the Rust config types (via typify) and editor TOML validation. See knowledge/configuration.md."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
@@ -37,7 +37,7 @@ pub mod error {
 #[doc = "{"]
 #[doc = "  \"$id\": \"https://github.com/six5536/symify/schema/symify.schema.json\","]
 #[doc = "  \"title\": \"Config\","]
-#[doc = "  \"description\": \"symify configuration — a single symify.toml / conf.d/*.toml file. Source of truth for both the Rust config types (via typify) and editor TOML validation. See specs/ARCHITECTURE.md.\","]
+#[doc = "  \"description\": \"symify configuration — a single symify.toml / conf.d/*.toml file. Source of truth for both the Rust config types (via typify) and editor TOML validation. See knowledge/configuration.md.\","]
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"properties\": {"]
 #[doc = "    \"mappings\": {"]
@@ -208,6 +208,42 @@ impl ::std::convert::From<bool> for LinkValue {
         Self::Boolean(value)
     }
 }
+#[doc = "A machine condition: one pattern or a list of alternatives. A pattern matches case-insensitively; `*` is allowed at the start and/or end of a host pattern (e.g. \"wrk-*\", \"*.local\"), nowhere else."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"title\": \"MachineMatch\","]
+#[doc = "  \"description\": \"A machine condition: one pattern or a list of alternatives. A pattern matches case-insensitively; `*` is allowed at the start and/or end of a host pattern (e.g. \\\"wrk-*\\\", \\\"*.local\\\"), nowhere else.\","]
+#[doc = "  \"oneOf\": ["]
+#[doc = "    {"]
+#[doc = "      \"description\": \"A single pattern.\","]
+#[doc = "      \"type\": \"string\""]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"description\": \"Alternatives; the condition matches when any pattern matches.\","]
+#[doc = "      \"type\": \"array\","]
+#[doc = "      \"items\": {"]
+#[doc = "        \"type\": \"string\""]
+#[doc = "      },"]
+#[doc = "      \"minItems\": 1"]
+#[doc = "    }"]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Eq, PartialEq)]
+#[serde(untagged)]
+pub enum MachineMatch {
+    String(::std::string::String),
+    Array(::std::vec::Vec<::std::string::String>),
+}
+impl ::std::convert::From<::std::vec::Vec<::std::string::String>> for MachineMatch {
+    fn from(value: ::std::vec::Vec<::std::string::String>) -> Self {
+        Self::Array(value)
+    }
+}
 #[doc = "A named group of links, with optional per-group overrides."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
@@ -218,9 +254,18 @@ impl ::std::convert::From<bool> for LinkValue {
 #[doc = "  \"description\": \"A named group of links, with optional per-group overrides.\","]
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"properties\": {"]
+#[doc = "    \"backup_keep\": {"]
+#[doc = "      \"description\": \"Backup retention for this mapping (overrides settings.backup_keep). 0 = keep all.\","]
+#[doc = "      \"type\": \"integer\","]
+#[doc = "      \"minimum\": 0.0"]
+#[doc = "    },"]
 #[doc = "    \"conflict\": {"]
 #[doc = "      \"description\": \"Conflict policy for this mapping (overrides settings.conflict).\","]
 #[doc = "      \"$ref\": \"#/$defs/Conflict\""]
+#[doc = "    },"]
+#[doc = "    \"host\": {"]
+#[doc = "      \"description\": \"Hostnames this mapping applies to, matched case-insensitively; `*` may open and/or close a pattern (\\\"wrk-*\\\", \\\"*.local\\\"). On other machines the mapping is inactive. Absent = all.\","]
+#[doc = "      \"$ref\": \"#/$defs/MachineMatch\""]
 #[doc = "    },"]
 #[doc = "    \"links\": {"]
 #[doc = "      \"description\": \"Map of live-relative (or absolute) key -> link value.\","]
@@ -237,6 +282,10 @@ impl ::std::convert::From<bool> for LinkValue {
 #[doc = "      \"description\": \"Link mechanism for this mapping (overrides settings.mode).\","]
 #[doc = "      \"$ref\": \"#/$defs/Mode\""]
 #[doc = "    },"]
+#[doc = "    \"os\": {"]
+#[doc = "      \"description\": \"Operating systems this mapping applies to: \\\"linux\\\", \\\"macos\\\" or \\\"windows\\\" (Rust's std::env::consts::OS values), matched case-insensitively with no globs. On other machines the mapping is inactive. Absent = all.\","]
+#[doc = "      \"$ref\": \"#/$defs/MachineMatch\""]
+#[doc = "    },"]
 #[doc = "    \"store\": {"]
 #[doc = "      \"description\": \"Backing repository for this mapping (overrides settings.store).\","]
 #[doc = "      \"type\": \"string\""]
@@ -249,9 +298,15 @@ impl ::std::convert::From<bool> for LinkValue {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Mapping {
+    #[doc = "Backup retention for this mapping (overrides settings.backup_keep). 0 = keep all."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub backup_keep: ::std::option::Option<u64>,
     #[doc = "Conflict policy for this mapping (overrides settings.conflict)."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub conflict: ::std::option::Option<Conflict>,
+    #[doc = "Hostnames this mapping applies to, matched case-insensitively; `*` may open and/or close a pattern (\"wrk-*\", \"*.local\"). On other machines the mapping is inactive. Absent = all."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub host: ::std::option::Option<MachineMatch>,
     #[doc = "Map of live-relative (or absolute) key -> link value."]
     #[serde(
         default,
@@ -264,6 +319,9 @@ pub struct Mapping {
     #[doc = "Link mechanism for this mapping (overrides settings.mode)."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub mode: ::std::option::Option<Mode>,
+    #[doc = "Operating systems this mapping applies to: \"linux\", \"macos\" or \"windows\" (Rust's std::env::consts::OS values), matched case-insensitively with no globs. On other machines the mapping is inactive. Absent = all."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub os: ::std::option::Option<MachineMatch>,
     #[doc = "Backing repository for this mapping (overrides settings.store)."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub store: ::std::option::Option<::std::string::String>,
@@ -271,10 +329,13 @@ pub struct Mapping {
 impl ::std::default::Default for Mapping {
     fn default() -> Self {
         Self {
+            backup_keep: Default::default(),
             conflict: Default::default(),
+            host: Default::default(),
             links: Default::default(),
             live: Default::default(),
             mode: Default::default(),
+            os: Default::default(),
             store: Default::default(),
         }
     }
@@ -295,7 +356,7 @@ impl ::std::default::Default for Mapping {
 #[doc = "    },"]
 #[doc = "    {"]
 #[doc = "      \"description\": \"An independent content copy, kept up to date incrementally (only changed files are copied).\","]
-#[doc = "      \"const\": \"sync\""]
+#[doc = "      \"const\": \"copy\""]
 #[doc = "    }"]
 #[doc = "  ]"]
 #[doc = "}"]
@@ -318,14 +379,14 @@ pub enum Mode {
     #[serde(rename = "symlink")]
     Symlink,
     #[doc = "An independent content copy, kept up to date incrementally (only changed files are copied)."]
-    #[serde(rename = "sync")]
-    Sync,
+    #[serde(rename = "copy")]
+    Copy,
 }
 impl ::std::fmt::Display for Mode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Symlink => f.write_str("symlink"),
-            Self::Sync => f.write_str("sync"),
+            Self::Copy => f.write_str("copy"),
         }
     }
 }
@@ -334,7 +395,7 @@ impl ::std::str::FromStr for Mode {
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
             "symlink" => Ok(Self::Symlink),
-            "sync" => Ok(Self::Sync),
+            "copy" => Ok(Self::Copy),
             _ => Err("invalid value".into()),
         }
     }
@@ -371,6 +432,11 @@ impl ::std::convert::TryFrom<::std::string::String> for Mode {
 #[doc = "  \"description\": \"Defaults applied to every mapping; each mapping may override them.\","]
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"properties\": {"]
+#[doc = "    \"backup_keep\": {"]
+#[doc = "      \"description\": \"Keep at most this many `<name>.<timestamp>.bak` backups per path, deleting the oldest when a new backup is written. 0 or absent = keep all (default).\","]
+#[doc = "      \"type\": \"integer\","]
+#[doc = "      \"minimum\": 0.0"]
+#[doc = "    },"]
 #[doc = "    \"conflict\": {"]
 #[doc = "      \"description\": \"Default policy when the side being written already exists and differs.\","]
 #[doc = "      \"$ref\": \"#/$defs/Conflict\""]
@@ -395,6 +461,9 @@ impl ::std::convert::TryFrom<::std::string::String> for Mode {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
+    #[doc = "Keep at most this many `<name>.<timestamp>.bak` backups per path, deleting the oldest when a new backup is written. 0 or absent = keep all (default)."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub backup_keep: ::std::option::Option<u64>,
     #[doc = "Default policy when the side being written already exists and differs."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub conflict: ::std::option::Option<Conflict>,
@@ -411,6 +480,7 @@ pub struct Settings {
 impl ::std::default::Default for Settings {
     fn default() -> Self {
         Self {
+            backup_keep: Default::default(),
             conflict: Default::default(),
             live: Default::default(),
             mode: Default::default(),

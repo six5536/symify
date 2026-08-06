@@ -9,6 +9,7 @@ const PACKAGES = {
   "linux arm64": "@six5536/symify-linux-arm64",
   "darwin x64": "@six5536/symify-darwin-x64",
   "darwin arm64": "@six5536/symify-darwin-arm64",
+  "win32 x64": "@six5536/symify-win32-x64",
 };
 
 const SUPPORTED = Object.keys(PACKAGES)
@@ -27,9 +28,9 @@ function binaryName(platform) {
 
 /**
  * Resolve the absolute path to the prebuilt binary for the given platform/arch.
- * Throws a clear, actionable error when the platform is unsupported or the
- * platform package was not installed. `requireResolve` defaults to the real
- * `require.resolve`.
+ * Throws if the platform has no binary, or if it has one but the package was
+ * never installed — each error names the fix. `requireResolve` defaults to the
+ * real `require.resolve`.
  */
 function resolveBinary(platform, arch, requireResolve = require.resolve) {
   const pkg = selectPackage(platform, arch);
@@ -45,8 +46,8 @@ function resolveBinary(platform, arch, requireResolve = require.resolve) {
   } catch {
     throw new Error(
       `The symify platform package "${pkg}" is not installed.\n` +
-        `This usually means an npm install issue (optional dependencies were skipped).\n` +
-        `Try reinstalling, or install from source: cargo install symify`,
+        `Optional dependencies were most likely skipped during install.\n` +
+        `Reinstall symify, or build from source: cargo install symify`,
     );
   }
 }

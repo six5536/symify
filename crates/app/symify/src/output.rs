@@ -11,7 +11,9 @@ use serde::Serialize;
 use symify_core::config::ResolvedConfig;
 use symify_core::model::Mode;
 use symify_core::status::{StatusEntry, StatusLabel};
-use symify_core::{Action, ActionKind, FsOp, Outcome, Planned, Verb, entry_paths};
+use symify_core::{
+    Action, ActionKind, DiffPair, DiffState, FsOp, Outcome, Planned, Verb, entry_paths,
+};
 
 /// Exit code: success / clean.
 pub const EXIT_OK: u8 = 0;
@@ -23,7 +25,7 @@ pub const EXIT_FAILURE: u8 = 2;
 fn mode_str(mode: Mode) -> &'static str {
     match mode {
         Mode::Symlink => "symlink",
-        Mode::Sync => "sync",
+        Mode::Copy => "copy",
     }
 }
 
@@ -44,6 +46,118 @@ fn action_word(kind: ActionKind) -> &'static str {
     }
 }
 
+// ----- inactive mappings ------------------------------------------------
+
+/// A mapping skipped because its `os`/`host` condition does not match this
+/// machine. Rendered as one line (or one JSON object), never per entry.
+#[derive(Serialize)]
+pub struct InactiveNote {
+    mapping: String,
+    inactive: bool,
+    reason: &'static str,
+}
+
+/// The per-config annotations every verb renders alongside its entries:
+/// inactive mappings and shared-target groups. Computed once from the
+/// selected config; empty collections render nothing.
+#[derive(Default)]
+pub struct Notes {
+    inactive: Vec<InactiveNote>,
+    shared: Vec<SharedNote>,
+}
+
+impl Notes {
+    /// Collect the notes for a resolved (and `-m`-selected) config.
+    pub fn from_config(config: &ResolvedConfig) -> Self {
+        Notes {
+            inactive: inactive_notes(config),
+            shared: shared_notes(config),
+        }
+    }
+}
+
+fn print_notes<W: Write>(w: &mut W, notes: &Notes) -> io::Result<()> {
+    print_inactive(w, &notes.inactive)?;
+    print_shared(w, &notes.shared)
+}
+
+/// The inactive mappings of a resolved config, ready to render.
+fn inactive_notes(config: &ResolvedConfig) -> Vec<InactiveNote> {
+    config
+        .mappings
+        .iter()
+        .filter_map(|m| {
+            m.inactive.map(|r| InactiveNote {
+                mapping: m.name.clone(),
+                inactive: true,
+                reason: r.key(),
+            })
+        })
+        .collect()
+}
+
+fn print_inactive<W: Write>(w: &mut W, notes: &[InactiveNote]) -> io::Result<()> {
+    for n in notes {
+        writeln!(w, "mapping {}: inactive ({})", n.mapping, n.reason)?;
+    }
+    Ok(())
+}
+
+// ----- shared targets ----------------------------------------------------
+
+/// A group of entries whose resolved paths collide (same store or live
+/// path). Informational: rendered as one note line / JSON object per group.
+#[derive(Serialize)]
+pub struct SharedNote {
+    side: &'static str,
+    path: String,
+    entries: Vec<SharedEntryJson>,
+}
+
+#[derive(Serialize)]
+struct SharedEntryJson {
+    mapping: String,
+    key: String,
+}
+
+/// The path-collision groups of a resolved config, ready to render.
+fn shared_notes(config: &ResolvedConfig) -> Vec<SharedNote> {
+    symify_core::shared_targets(config)
+        .into_iter()
+        .map(|g| SharedNote {
+            side: match g.side {
+                symify_core::SharedSide::Live => "live",
+                symify_core::SharedSide::Store => "store",
+            },
+            path: g.path.display().to_string(),
+            entries: g
+                .entries
+                .into_iter()
+                .map(|(mapping, key)| SharedEntryJson { mapping, key })
+                .collect(),
+        })
+        .collect()
+}
+
+fn print_shared<W: Write>(w: &mut W, notes: &[SharedNote]) -> io::Result<()> {
+    for n in notes {
+        let list: Vec<String> = n
+            .entries
+            .iter()
+            .map(|e| format!("{}/{}", e.mapping, e.key))
+            .collect();
+        writeln!(
+            w,
+            "note: {} entries share {} path {}: {}",
+            n.entries.len(),
+            n.side,
+            n.path,
+            list.join(", ")
+        )?;
+    }
+    Ok(())
+}
+
 // ----- run (sync / deploy) ----------------------------------------------
 
 #[derive(Serialize)]
@@ -51,6 +165,10 @@ struct RunJson<'a> {
     verb: &'a str,
     dry_run: bool,
     entries: Vec<RunEntryJson>,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    inactive_mappings: &'a [InactiveNote],
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    shared_targets: &'a [SharedNote],
     summary: RunSummary,
 }
 
@@ -66,7 +184,7 @@ struct RunEntryJson {
     action: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     detail: Option<String>,
-    /// Files copied (`sync` mode).
+    /// Files copied (`copy` mode).
     copied: usize,
     /// Files backed up before an overwrite.
     backed_up: usize,
@@ -93,6 +211,7 @@ pub fn render_run<W: Write>(
     dry_run: bool,
     planned: &[Planned],
     outcomes: &[Outcome],
+    notes: &Notes,
     json: bool,
 ) -> io::Result<u8> {
     let mut summary = RunSummary::default();
@@ -130,6 +249,8 @@ pub fn render_run<W: Write>(
             verb: verb_str(verb),
             dry_run,
             entries,
+            inactive_mappings: &notes.inactive,
+            shared_targets: &notes.shared,
             summary,
         };
         writeln!(w, "{}", serde_json::to_string_pretty(&doc).unwrap())?;
@@ -140,6 +261,7 @@ pub fn render_run<W: Write>(
         for e in &entries {
             print_line(w, e)?;
         }
+        print_notes(w, notes)?;
         print_run_summary(w, verb, dry_run, &summary)?;
     }
 
@@ -290,8 +412,12 @@ fn print_run_summary<W: Write>(
 // ----- status -----------------------------------------------------------
 
 #[derive(Serialize)]
-struct StatusJson {
+struct StatusJson<'a> {
     entries: Vec<StatusEntryJson>,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    inactive_mappings: &'a [InactiveNote],
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    shared_targets: &'a [SharedNote],
     summary: StatusSummary,
 }
 
@@ -329,7 +455,12 @@ fn status_str(label: &StatusLabel) -> &'static str {
 }
 
 /// Render `status` results; returns the process exit code.
-pub fn render_status<W: Write>(w: &mut W, entries: &[StatusEntry], json: bool) -> io::Result<u8> {
+pub fn render_status<W: Write>(
+    w: &mut W,
+    entries: &[StatusEntry],
+    notes: &Notes,
+    json: bool,
+) -> io::Result<u8> {
     let mut summary = StatusSummary::default();
     let mut out = Vec::with_capacity(entries.len());
 
@@ -361,6 +492,8 @@ pub fn render_status<W: Write>(w: &mut W, entries: &[StatusEntry], json: bool) -
     if json {
         let doc = StatusJson {
             entries: out,
+            inactive_mappings: &notes.inactive,
+            shared_targets: &notes.shared,
             summary,
         };
         writeln!(w, "{}", serde_json::to_string_pretty(&doc).unwrap())?;
@@ -372,6 +505,7 @@ pub fn render_status<W: Write>(w: &mut W, entries: &[StatusEntry], json: bool) -
             };
             writeln!(w, "  {:<13} {}/{}{}", e.status, e.mapping, e.key, detail)?;
         }
+        print_notes(w, notes)?;
         writeln!(
             w,
             "\nstatus: {} ok, {} drift, {} failed",
@@ -386,6 +520,250 @@ pub fn render_status<W: Write>(w: &mut W, entries: &[StatusEntry], json: bool) -
     } else {
         EXIT_OK
     })
+}
+
+// ----- diff --------------------------------------------------------------
+
+/// Content larger than this is summarised, not diffed — `diff` is for
+/// dotfiles, not databases.
+const MAX_DIFF_BYTES: u64 = 1 << 20;
+
+#[derive(Serialize)]
+struct DiffJson<'a> {
+    entries: Vec<DiffEntryJson>,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    inactive_mappings: &'a [InactiveNote],
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    shared_targets: &'a [SharedNote],
+    summary: StatusSummary,
+}
+
+#[derive(Serialize)]
+struct DiffEntryJson {
+    mapping: String,
+    key: String,
+    live: String,
+    store: String,
+    mode: &'static str,
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
+    /// Per-file differences (paths and state only — no content hunks).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    files: Vec<DiffFileJson>,
+}
+
+#[derive(Serialize)]
+struct DiffFileJson {
+    live: String,
+    store: String,
+    state: &'static str,
+}
+
+fn diff_state_str(s: DiffState) -> &'static str {
+    match s {
+        DiffState::Differs => "differs",
+        DiffState::LiveOnly => "live-only",
+        DiffState::StoreOnly => "store-only",
+    }
+}
+
+/// Render `diff` results; returns the process exit code (same policy as
+/// `status`). `pairs` is parallel to `entries`: the per-file differences of
+/// entries that have any, empty otherwise.
+pub fn render_diff<W: Write>(
+    w: &mut W,
+    entries: &[StatusEntry],
+    pairs: &[Vec<DiffPair>],
+    notes: &Notes,
+    json: bool,
+) -> io::Result<u8> {
+    let mut summary = StatusSummary::default();
+    for e in entries {
+        if e.label.is_failure() {
+            summary.failed += 1;
+        } else if e.label.is_clean() {
+            summary.clean += 1;
+        } else {
+            summary.drift += 1;
+        }
+    }
+    let (clean, drift, failed) = (summary.clean, summary.drift, summary.failed);
+
+    if json {
+        let out = entries
+            .iter()
+            .zip(pairs)
+            .map(|(e, ps)| DiffEntryJson {
+                mapping: e.mapping.clone(),
+                key: e.key.clone(),
+                live: e.live.display().to_string(),
+                store: e.store.display().to_string(),
+                mode: mode_str(e.mode),
+                status: status_str(&e.label),
+                detail: match &e.label {
+                    StatusLabel::Failed(m) => Some(m.clone()),
+                    _ => None,
+                },
+                files: ps
+                    .iter()
+                    .map(|p| DiffFileJson {
+                        live: p.live.display().to_string(),
+                        store: p.store.display().to_string(),
+                        state: diff_state_str(p.state),
+                    })
+                    .collect(),
+            })
+            .collect();
+        let doc = DiffJson {
+            entries: out,
+            inactive_mappings: &notes.inactive,
+            shared_targets: &notes.shared,
+            summary,
+        };
+        writeln!(w, "{}", serde_json::to_string_pretty(&doc).unwrap())?;
+    } else {
+        for (e, ps) in entries.iter().zip(pairs) {
+            print_diff_entry(w, e, ps)?;
+        }
+        print_notes(w, notes)?;
+        writeln!(w, "\ndiff: {clean} ok, {drift} drift, {failed} failed")?;
+    }
+
+    Ok(if failed > 0 {
+        EXIT_FAILURE
+    } else if drift > 0 {
+        EXIT_DRIFT
+    } else {
+        EXIT_OK
+    })
+}
+
+/// One entry's human diff: a status-style header line, then its per-file
+/// content. Clean entries are silent.
+fn print_diff_entry<W: Write>(w: &mut W, e: &StatusEntry, pairs: &[DiffPair]) -> io::Result<()> {
+    if e.label.is_clean() {
+        return Ok(());
+    }
+    let header = status_str(&e.label);
+    writeln!(w, "{:<13} {}/{}", header, e.mapping, e.key)?;
+    match &e.label {
+        StatusLabel::Failed(msg) => writeln!(w, "  {msg}")?,
+        StatusLabel::WrongTarget => {
+            let actual = std::fs::read_link(&e.live)
+                .map(|t| t.display().to_string())
+                .unwrap_or_else(|err| format!("<unreadable: {err}>"));
+            writeln!(w, "  expected {}", e.store.display())?;
+            writeln!(w, "  actual   {actual}")?;
+        }
+        StatusLabel::LiveMissing => writeln!(w, "  live side missing: {}", e.live.display())?,
+        StatusLabel::StoreMissing => writeln!(w, "  store side missing: {}", e.store.display())?,
+        StatusLabel::Missing => writeln!(w, "  both sides missing")?,
+        _ => {
+            if pairs.is_empty() {
+                // The whole-entry check saw a difference the per-file walk
+                // doesn't reproduce (e.g. an unadopted file whose content
+                // already matches — sync would relink it).
+                writeln!(w, "  content matches the store")?;
+            }
+            for p in pairs {
+                print_diff_pair(w, p)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn print_diff_pair<W: Write>(w: &mut W, p: &DiffPair) -> io::Result<()> {
+    match p.state {
+        DiffState::LiveOnly => writeln!(w, "only in live: {}", p.live.display()),
+        DiffState::StoreOnly => writeln!(w, "only in store: {}", p.store.display()),
+        DiffState::Differs => print_content_diff(w, &p.store, &p.live),
+    }
+}
+
+/// A unified content diff, store as old (`-`) and live as new (`+`), so it
+/// reads as "what your live edits would push into the store". Non-text and
+/// oversize content is summarised in one line instead.
+fn print_content_diff<W: Write>(w: &mut W, store: &Path, live: &Path) -> io::Result<()> {
+    let (smd, lmd) = match (
+        std::fs::symlink_metadata(store),
+        std::fs::symlink_metadata(live),
+    ) {
+        (Ok(s), Ok(l)) => (s, l),
+        _ => return writeln!(w, "unreadable: {} or {}", store.display(), live.display()),
+    };
+
+    if smd.file_type().is_symlink() && lmd.file_type().is_symlink() {
+        let target = |p: &Path| {
+            std::fs::read_link(p)
+                .map(|t| t.display().to_string())
+                .unwrap_or_else(|_| "<unreadable>".into())
+        };
+        writeln!(w, "links differ: live -> {}", target(live))?;
+        return writeln!(w, "              store -> {}", target(store));
+    }
+    // Mixed kinds (including symlink vs file/dir): name both sides honestly
+    // rather than diffing content that isn't comparable.
+    let kind = |m: &std::fs::Metadata| {
+        if m.file_type().is_symlink() {
+            "symlink"
+        } else if m.is_dir() {
+            "directory"
+        } else {
+            "file"
+        }
+    };
+    if smd.file_type().is_symlink() || lmd.file_type().is_symlink() || smd.is_dir() || lmd.is_dir()
+    {
+        return writeln!(
+            w,
+            "kinds differ: live is a {}, store is a {}",
+            kind(&lmd),
+            kind(&smd)
+        );
+    }
+    if smd.len() > MAX_DIFF_BYTES || lmd.len() > MAX_DIFF_BYTES {
+        return writeln!(
+            w,
+            "too large to diff ({} ↔ {} bytes): {}",
+            smd.len(),
+            lmd.len(),
+            live.display()
+        );
+    }
+
+    let (old, new) = match (std::fs::read(store), std::fs::read(live)) {
+        (Ok(o), Ok(n)) => (o, n),
+        _ => return writeln!(w, "unreadable: {} or {}", store.display(), live.display()),
+    };
+    if old == new {
+        // Quick-check drift with identical bytes: mtime or permissions only.
+        return writeln!(
+            w,
+            "contents identical (metadata differs): {}",
+            live.display()
+        );
+    }
+    let is_binary = |b: &[u8]| b.iter().take(8192).any(|&c| c == 0);
+    if is_binary(&old) || is_binary(&new) {
+        return writeln!(
+            w,
+            "binary files differ ({} ↔ {} bytes)",
+            old.len(),
+            new.len()
+        );
+    }
+
+    let (old, new) = (String::from_utf8_lossy(&old), String::from_utf8_lossy(&new));
+    let text = similar::TextDiff::from_lines(old.as_ref(), new.as_ref());
+    write!(
+        w,
+        "{}",
+        text.unified_diff()
+            .context_radius(3)
+            .header(&store.display().to_string(), &live.display().to_string())
+    )
 }
 
 // ----- add / remove / list ----------------------------------------------
@@ -528,6 +906,9 @@ struct ListMappingJson {
     store: String,
     mode: &'static str,
     conflict: &'static str,
+    /// The unmatched condition (`os`/`host`) when the mapping is inactive here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    inactive: Option<&'static str>,
     entries: Vec<ListEntryJson>,
 }
 
@@ -564,6 +945,7 @@ pub fn render_list<W: Write>(
                 store: m.store.display().to_string(),
                 mode: mode_str(m.mode),
                 conflict: conflict_str(m.conflict),
+                inactive: m.inactive.map(|r| r.key()),
                 entries: m
                     .links
                     .iter()
@@ -591,15 +973,20 @@ pub fn render_list<W: Write>(
         return Ok(EXIT_OK);
     }
     for m in &config.mappings {
+        let inactive = match m.inactive {
+            Some(r) => format!("  inactive ({})", r.key()),
+            None => String::new(),
+        };
         writeln!(
             w,
-            "{}  {} → {}  {}  {}  ({} entries)",
+            "{}  {} → {}  {}  {}  ({} entries){}",
             m.name,
             m.live.display(),
             m.store.display(),
             mode_str(m.mode),
             conflict_str(m.conflict),
-            m.links.len()
+            m.links.len(),
+            inactive
         )?;
         if entries {
             for (k, v) in &m.links {
@@ -674,7 +1061,7 @@ mod tests {
             ),
             planned(
                 "push",
-                Mode::Sync,
+                Mode::Copy,
                 Action::Apply {
                     kind: Push,
                     ops: vec![copy("push"), FsOp::Backup("/store/push".into())],
@@ -682,7 +1069,7 @@ mod tests {
             ),
             planned(
                 "pull",
-                Mode::Sync,
+                Mode::Copy,
                 Action::Apply {
                     kind: Pull,
                     ops: vec![copy("pull")],
@@ -690,15 +1077,15 @@ mod tests {
             ),
             planned(
                 "drifted",
-                Mode::Sync,
+                Mode::Copy,
                 Action::ApplyDrift {
                     kind: Push,
                     ops: vec![copy("drifted"), FsOp::Remove("/store/old".into())],
                 },
             ),
             planned("clean", Mode::Symlink, Action::AlreadyOk),
-            planned("skipped", Mode::Sync, Action::Skip("nothing to do")),
-            planned("conflicted", Mode::Sync, Action::Conflict),
+            planned("skipped", Mode::Copy, Action::Skip("nothing to do")),
+            planned("conflicted", Mode::Copy, Action::Conflict),
             planned("off", Mode::Symlink, Action::Disabled),
             planned("broken", Mode::Symlink, Action::Failed("boom".into())),
         ];
@@ -721,7 +1108,16 @@ mod tests {
     fn render_to_string(json: bool, dry_run: bool) -> (String, u8) {
         let (p, o) = run_fixture();
         let mut buf = Vec::new();
-        let code = render_run(&mut buf, Verb::Sync, dry_run, &p, &o, json).unwrap();
+        let code = render_run(
+            &mut buf,
+            Verb::Sync,
+            dry_run,
+            &p,
+            &o,
+            &Notes::default(),
+            json,
+        )
+        .unwrap();
         (String::from_utf8(buf).unwrap(), code)
     }
 
@@ -759,7 +1155,7 @@ mod tests {
         assert_eq!(push["backed_up"], 1);
         assert_eq!(push["removed"], 0);
         assert_eq!(push["drift"], false);
-        assert_eq!(push["mode"], "sync");
+        assert_eq!(push["mode"], "copy");
 
         // drifted: applied-drift carries copied + removed and drift=true.
         let drifted = entries.iter().find(|e| e["key"] == "drifted").unwrap();
@@ -781,10 +1177,19 @@ mod tests {
 
     #[test]
     fn run_json_failure_outranks_drift_in_exit() {
-        let p = vec![planned("x", Mode::Sync, Action::Failed("nope".into()))];
+        let p = vec![planned("x", Mode::Copy, Action::Failed("nope".into()))];
         let o = vec![Outcome::Failed("nope".into())];
         let mut buf = Vec::new();
-        let code = render_run(&mut buf, Verb::Deploy, false, &p, &o, true).unwrap();
+        let code = render_run(
+            &mut buf,
+            Verb::Deploy,
+            false,
+            &p,
+            &o,
+            &Notes::default(),
+            true,
+        )
+        .unwrap();
         assert_eq!(code, EXIT_FAILURE);
         let v: Value = serde_json::from_str(&String::from_utf8(buf).unwrap()).unwrap();
         assert_eq!(v["verb"], "deploy");
@@ -808,9 +1213,9 @@ mod tests {
             mk("unadopted", Mode::Symlink, StatusLabel::Unadopted),
             mk("wrong", Mode::Symlink, StatusLabel::WrongTarget),
             mk("live-missing", Mode::Symlink, StatusLabel::LiveMissing),
-            mk("store-missing", Mode::Sync, StatusLabel::StoreMissing),
+            mk("store-missing", Mode::Copy, StatusLabel::StoreMissing),
             mk("missing", Mode::Symlink, StatusLabel::Missing),
-            mk("differs", Mode::Sync, StatusLabel::Differs),
+            mk("differs", Mode::Copy, StatusLabel::Differs),
             mk(
                 "broken",
                 Mode::Symlink,
@@ -822,7 +1227,7 @@ mod tests {
     #[test]
     fn status_human_every_label() {
         let mut buf = Vec::new();
-        let code = render_status(&mut buf, &status_fixture(), false).unwrap();
+        let code = render_status(&mut buf, &status_fixture(), &Notes::default(), false).unwrap();
         // Has drift and a failure -> failure code wins.
         assert_eq!(code, EXIT_FAILURE);
         insta::assert_snapshot!("status_human_every_label", String::from_utf8(buf).unwrap());
@@ -831,7 +1236,7 @@ mod tests {
     #[test]
     fn status_json_summary_and_detail() {
         let mut buf = Vec::new();
-        render_status(&mut buf, &status_fixture(), true).unwrap();
+        render_status(&mut buf, &status_fixture(), &Notes::default(), true).unwrap();
         let v: Value = serde_json::from_str(&String::from_utf8(buf).unwrap()).unwrap();
         let sum = &v["summary"];
         // Ok + Disabled are clean (2); failed (1); the rest are drift (6).
@@ -859,7 +1264,7 @@ mod tests {
             label: StatusLabel::Ok,
         }];
         let mut buf = Vec::new();
-        let code = render_status(&mut buf, &entries, false).unwrap();
+        let code = render_status(&mut buf, &entries, &Notes::default(), false).unwrap();
         assert_eq!(code, EXIT_OK);
     }
 
@@ -877,6 +1282,8 @@ mod tests {
                     (".bashrc".into(), LinkValue::Boolean(true)),
                     (".vimrc".into(), LinkValue::String("vim/vimrc".into())),
                 ],
+                inactive: None,
+                backup_keep: 0,
             }],
         }
     }

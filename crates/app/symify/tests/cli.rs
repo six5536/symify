@@ -47,9 +47,9 @@ impl Fx {
             config,
         }
     }
-    /// A single `mode = "sync"` (copy) mapping with the given conflict policy
+    /// A single `mode = "copy"` mapping with the given conflict policy
     /// and link lines.
-    fn sync(conflict: &str, links: &[&str]) -> Self {
+    fn copy(conflict: &str, links: &[&str]) -> Self {
         let tmp = tempfile::tempdir().unwrap();
         let live = tmp.path().join("live");
         let store = tmp.path().join("store");
@@ -59,7 +59,7 @@ impl Fx {
         std::fs::write(
             &config,
             format!(
-                "[settings]\nlive = \"{}\"\nstore = \"{}\"\nmode = \"sync\"\nconflict = \"{conflict}\"\n\n[mappings.dotfiles.links]\n{}\n",
+                "[settings]\nlive = \"{}\"\nstore = \"{}\"\nmode = \"copy\"\nconflict = \"{conflict}\"\n\n[mappings.dotfiles.links]\n{}\n",
                 live.display(),
                 store.display(),
                 links.join("\n"),
@@ -90,6 +90,24 @@ impl Fx {
         let mut c = Command::cargo_bin("symify").unwrap();
         c.arg(verb).arg("-c").arg(&self.config);
         c
+    }
+}
+
+/// Test symlink on any platform: Unix `symlink`, or the target-kind-aware
+/// Windows call (CI runners execute elevated, so no privilege issues).
+fn make_test_symlink<P: AsRef<Path>, Q: AsRef<Path>>(target: P, link: Q) -> std::io::Result<()> {
+    #[cfg(unix)]
+    return std::os::unix::fs::symlink(target, link);
+    #[cfg(windows)]
+    {
+        let is_dir = std::fs::metadata(target.as_ref())
+            .map(|m| m.is_dir())
+            .unwrap_or(false);
+        if is_dir {
+            std::os::windows::fs::symlink_dir(target, link)
+        } else {
+            std::os::windows::fs::symlink_file(target, link)
+        }
     }
 }
 
@@ -421,6 +439,25 @@ fn man_renders_roff_with_version() {
         "man page should carry the version, got: {stdout}"
     );
     assert!(stdout.contains(".SH NAME"), "got: {stdout}");
+    // Per-verb sections: every visible verb gets an .SS with its own flags.
+    for verb in ["sync", "deploy", "status", "diff", "add", "remove", "list"] {
+        assert!(
+            stdout.contains(&format!(".SS \"symify {verb}")),
+            "man page should document `{verb}`, got: {stdout}"
+        );
+    }
+    assert!(!stdout.contains(".SS \"symify man"), "man stays hidden");
+    for needle in [
+        "\\-\\-dry\\-run",
+        "\\-\\-checksum",
+        "\\-\\-modify\\-window\\fR \\fI<SECONDS>",
+        "\\-\\-store\\-path",
+        ".SH EXIT STATUS",
+        ".SH FILES",
+        "symify.toml",
+    ] {
+        assert!(stdout.contains(needle), "missing {needle:?} in: {stdout}");
+    }
 }
 
 #[test]
@@ -436,6 +473,56 @@ fn man_is_hidden_from_help_but_completions_is_not() {
         !stdout.contains("Print a roff man page"),
         "man should be hidden, got: {stdout}"
     );
+}
+
+/// A reader that stops early (`symify … | head`) must not turn into a crash or a
+/// spurious error. `clap_complete` `expect()`s its writes, so before this was
+/// fixed `completions fish` hit the closed pipe and died with SIGABRT under
+/// `panic = "abort"`; the config-reading verbs printed
+/// `error: I/O error at <stdout>: Broken pipe` and exited 2.
+#[test]
+fn closed_stdout_exits_cleanly_and_quietly() {
+    // Enough entries that status/list output exceeds the 64 KiB pipe buffer:
+    // the child then blocks writing until the parent closes the read end, so
+    // it deterministically sees EPIPE. With a two-line fixture the child could
+    // finish before the close and exit with its real (drift) code — a flake.
+    let links: Vec<String> = (0..3000)
+        .map(|i| format!("\"entry-number-{i:04}\" = true"))
+        .collect();
+    let link_refs: Vec<&str> = links.iter().map(String::as_str).collect();
+    let fx = Fx::new("backup", &link_refs);
+    let bin = assert_cmd::cargo::cargo_bin("symify");
+    let cfg = fx.config.to_string_lossy().into_owned();
+
+    for args in [
+        vec!["completions", "fish"],
+        vec!["completions", "bash"],
+        vec!["man"],
+        vec!["status", "-c", &cfg],
+        vec!["list", "--entries", "-c", &cfg],
+    ] {
+        let mut child = std::process::Command::new(&bin)
+            .args(&args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        // Close the read end before the child gets going, so its writes see EPIPE.
+        drop(child.stdout.take());
+        let out = child.wait_with_output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{args:?} on a closed pipe: expected exit 0, got {:?} (stderr: {stderr})",
+            out.status
+        );
+        assert!(
+            stderr.is_empty(),
+            "{args:?} on a closed pipe should print nothing, got: {stderr}"
+        );
+    }
 }
 
 // ----- safety guards ----------------------------------------------------
@@ -532,11 +619,11 @@ fn auto_init_with_json_keeps_stdout_clean() {
         .unwrap_or_else(|e| panic!("stdout not clean JSON ({e}): {stdout}"));
 }
 
-// ----- sync (copy) mode: incremental, checksum -------------------------
+// ----- copy mode: incremental, checksum ---------------------------------
 
 #[test]
 fn sync_copy_touches_only_changed_files() {
-    let fx = Fx::sync("backup", &["\"conf\" = true"]);
+    let fx = Fx::copy("backup", &["\"conf\" = true"]);
     fx.write(&fx.lp("conf/a"), b"a");
     fx.write(&fx.lp("conf/b"), b"b");
 
@@ -569,7 +656,7 @@ fn sync_copy_touches_only_changed_files() {
 
 #[test]
 fn sync_checksum_skips_recopy_on_mtime_only_change() {
-    let fx = Fx::sync("replace", &["\"f\" = true"]);
+    let fx = Fx::copy("replace", &["\"f\" = true"]);
     fx.write(&fx.lp("f"), b"content");
     fx.cmd("sync").assert().success();
 
@@ -612,7 +699,7 @@ fn sync_checksum_skips_recopy_on_mtime_only_change() {
 
 #[test]
 fn sync_skip_partial_apply_reports_drift_exit_1() {
-    let fx = Fx::sync("skip", &["\"conf\" = true"]);
+    let fx = Fx::copy("skip", &["\"conf\" = true"]);
     fx.write(&fx.lp("conf/a"), b"a");
     fx.cmd("sync").assert().success();
 
@@ -628,4 +715,360 @@ fn sync_skip_partial_apply_reports_drift_exit_1() {
         fx.sp("conf/new").exists(),
         "additive copy applied under skip"
     );
+}
+
+// ----- per-machine mappings (os / host) ---------------------------------
+
+/// A config with the active `dotfiles` mapping (os-gated to every CI OS) plus
+/// an `other` mapping host-gated to a hostname that cannot exist here.
+fn machine_fx() -> Fx {
+    Fx::with_body(
+        concat!(
+            "[mappings.dotfiles]\n",
+            "os = [\"linux\", \"macos\", \"windows\"]\n",
+            "[mappings.dotfiles.links]\n",
+            "\"a\" = true\n\n",
+            "[mappings.other]\n",
+            "host = \"no-such-host.invalid\"\n",
+            "[mappings.other.links]\n",
+            "\"b\" = true\n"
+        ),
+        "backup",
+    )
+}
+
+#[test]
+fn inactive_mapping_is_noted_and_skipped() {
+    let fx = machine_fx();
+    fx.write(&fx.lp("a"), b"x");
+    fx.write(&fx.lp("b"), b"y");
+
+    // The active mapping applies; the inactive one is a note, not entries, and
+    // the mixed run still exits 0.
+    let out = fx.cmd("sync").assert().success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains("mapping other: inactive (host)"),
+        "got: {stdout}"
+    );
+    assert!(is_symlink(&fx.lp("a")), "active mapping must still adopt");
+    assert!(
+        !is_symlink(&fx.lp("b")) && fx.lp("b").exists(),
+        "inactive mapping must not be touched"
+    );
+
+    // status --json: entries only for the active mapping; the inactive one is
+    // a {mapping, inactive, reason} object.
+    let out = fx.cmd("status").arg("--json").assert().success();
+    let doc: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert!(
+        doc["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["mapping"] == "dotfiles"),
+        "got: {doc}"
+    );
+    assert_eq!(
+        doc["inactive_mappings"],
+        serde_json::json!([{ "mapping": "other", "inactive": true, "reason": "host" }]),
+    );
+
+    // Explicitly selecting the inactive mapping is a clean no-op with the note.
+    let out = fx.cmd("status").arg("-m").arg("other").assert().success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains("mapping other: inactive (host)"),
+        "got: {stdout}"
+    );
+
+    // list marks the inactive mapping.
+    let out = fx.cmd("list").assert().success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(stdout.contains("inactive (host)"), "got: {stdout}");
+}
+
+#[test]
+fn add_and_remove_refuse_an_inactive_mapping() {
+    let fx = machine_fx();
+    fx.write(&fx.lp("c"), b"z");
+
+    let out = fx
+        .cmd("add")
+        .arg(fx.lp("c"))
+        .args(["-m", "other"])
+        .assert()
+        .code(2);
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("inactive on this machine") && stderr.contains("`host`"),
+        "got: {stderr}"
+    );
+    assert!(
+        !fx.config_text().contains("\"c\""),
+        "refused add must not edit the config"
+    );
+
+    fx.cmd("remove")
+        .arg(fx.lp("b"))
+        .args(["-m", "other"])
+        .assert()
+        .code(2);
+}
+
+// ----- diff --------------------------------------------------------------
+
+#[test]
+fn diff_renders_content_and_per_file_states() {
+    let fx = Fx::copy("backup", &["\"conf\" = true"]);
+    fx.write(&fx.lp("conf/a.txt"), b"line1\nline2\nline3\n");
+    fx.write(&fx.sp("conf/a.txt"), b"line1\nCHANGED\nline3\n");
+    fx.write(&fx.lp("conf/new.txt"), b"new\n");
+    fx.write(&fx.sp("conf/stale.txt"), b"stale\n");
+    fx.write(&fx.sp("conf/bin.dat"), b"\x00\x01\x02");
+    fx.write(&fx.lp("conf/bin.dat"), b"\x00\x01\x02\x03");
+
+    let out = fx.cmd("diff").assert().code(1); // drift exit…
+    fx.cmd("status").assert().code(1); // …matching status on the same tree
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    // Unified diff, store as old (-), live as new (+).
+    assert!(stdout.contains("-CHANGED"), "got: {stdout}");
+    assert!(stdout.contains("+line2"), "got: {stdout}");
+    assert!(stdout.contains("only in live:"), "got: {stdout}");
+    assert!(stdout.contains("only in store:"), "got: {stdout}");
+    assert!(stdout.contains("binary files differ"), "got: {stdout}");
+
+    // JSON: per-file paths and states, no content hunks.
+    let out = fx.cmd("diff").arg("--json").assert().code(1);
+    let doc: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    let files = doc["entries"][0]["files"].as_array().unwrap();
+    let states: Vec<&str> = files.iter().map(|f| f["state"].as_str().unwrap()).collect();
+    assert!(states.contains(&"differs"), "got: {doc}");
+    assert!(states.contains(&"live-only"), "got: {doc}");
+    assert!(states.contains(&"store-only"), "got: {doc}");
+}
+
+#[test]
+fn diff_symlink_mode_states_and_clean_exit() {
+    let fx = Fx::new("backup", &["\"a\" = true", "\"b\" = true"]);
+    // a: unadopted with content that differs -> a real diff.
+    fx.write(&fx.lp("a"), b"live\n");
+    fx.write(&fx.sp("a"), b"store\n");
+    // b: wrong target.
+    fx.write(&fx.sp("b"), b"x");
+    make_test_symlink(fx.sp("a"), fx.lp("b")).unwrap();
+
+    let out = fx.cmd("diff").assert().code(1);
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(stdout.contains("unadopted"), "got: {stdout}");
+    assert!(stdout.contains("-store"), "got: {stdout}");
+    assert!(stdout.contains("+live"), "got: {stdout}");
+    assert!(stdout.contains("wrong-target"), "got: {stdout}");
+    assert!(stdout.contains("expected"), "got: {stdout}");
+
+    // sync adopts a (b is a link — nothing to capture); deploy repairs b's
+    // wrong target. Diff then goes silent and exits 0.
+    fx.cmd("sync").assert().success();
+    fx.cmd("deploy").assert().success();
+    let out = fx.cmd("diff").assert().success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert_eq!(
+        stdout.trim(),
+        "diff: 2 ok, 0 drift, 0 failed",
+        "got: {stdout}"
+    );
+}
+
+#[test]
+fn diff_is_not_captured_by_the_bare_path_shortcut() {
+    // `symify diff` must stay the verb, not become `add diff`.
+    let fx = Fx::new("backup", &[]);
+    fx.cmd("diff").assert().success();
+}
+
+// ----- backup_keep retention ---------------------------------------------
+
+#[test]
+fn backup_keep_prunes_only_after_dry_run_preview() {
+    let fx = Fx::with_body(
+        "backup_keep = 1\n\n[mappings.dotfiles.links]\n\"x\" = true\n",
+        "backup",
+    );
+    fx.write(&fx.lp("x"), b"live");
+    fx.write(&fx.sp("x"), b"store");
+    fx.write(&fx.sp("x.20200101000000.bak"), b"ancient");
+
+    // Dry run: the prune is visible (removed count) but nothing changes.
+    let out = fx
+        .cmd("sync")
+        .args(["--dry-run", "--json"])
+        .assert()
+        .success();
+    let doc: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert_eq!(doc["entries"][0]["removed"], 1, "got: {doc}");
+    assert!(fx.sp("x.20200101000000.bak").exists());
+
+    // Real run: keep = 1 means only the fresh backup survives.
+    fx.cmd("sync").assert().success();
+    assert!(!fx.sp("x.20200101000000.bak").exists());
+    let baks: Vec<_> = std::fs::read_dir(&fx.store)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".bak"))
+        .collect();
+    assert_eq!(baks.len(), 1, "exactly the fresh backup: {baks:?}");
+}
+
+#[test]
+fn backup_keep_dir_prune_is_gated_like_any_recursive_delete() {
+    // The stale backup is a non-empty directory, so pruning it is an
+    // unrecoverable recursive delete: refused when non-interactive without
+    // --yes, applied with it.
+    let fx = Fx::with_body(
+        "backup_keep = 1\n\n[mappings.dotfiles.links]\n\"d\" = true\n",
+        "backup",
+    );
+    fx.write(&fx.lp("d/f.txt"), b"live");
+    fx.write(&fx.sp("d/f.txt"), b"store");
+    fx.write(&fx.sp("d.20200101000000.bak/old.txt"), b"ancient");
+
+    let out = fx.cmd("sync").assert().code(2); // piped stdin => non-interactive
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("refusing to recursively delete"),
+        "got: {stderr}"
+    );
+    assert!(
+        fx.sp("d.20200101000000.bak/old.txt").exists(),
+        "refused run must not prune"
+    );
+
+    fx.cmd("sync").arg("--yes").assert().success();
+    assert!(
+        !fx.sp("d.20200101000000.bak").exists(),
+        "pruned under --yes"
+    );
+}
+
+#[test]
+fn diff_names_kinds_when_one_side_is_a_symlink() {
+    // A symlink vs a regular file must not render as "links differ" with a
+    // bogus target; it names both kinds.
+    let fx = Fx::copy("backup", &["\"conf\" = true"]);
+    fx.write(&fx.sp("conf/f"), b"plain file\n");
+    std::fs::create_dir_all(fx.lp("conf")).unwrap();
+    make_test_symlink("/nonexistent", fx.lp("conf/f")).unwrap();
+
+    let out = fx.cmd("diff").assert().code(1);
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains("kinds differ: live is a symlink, store is a file"),
+        "got: {stdout}"
+    );
+    assert!(!stdout.contains("links differ"), "got: {stdout}");
+    assert!(!stdout.contains("<not a link>"), "got: {stdout}");
+}
+
+#[test]
+fn gate_refusal_names_the_pending_delete() {
+    // The non-interactive refusal must say WHICH path needed confirming, so a
+    // cron log is actionable.
+    let fx = Fx::with_body(
+        "backup_keep = 1\n\n[mappings.dotfiles.links]\n\"d\" = true\n",
+        "backup",
+    );
+    fx.write(&fx.lp("d/f.txt"), b"live");
+    fx.write(&fx.sp("d/f.txt"), b"store");
+    fx.write(&fx.sp("d.20200101000000.bak/old.txt"), b"ancient");
+
+    let out = fx.cmd("sync").assert().code(2);
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("d.20200101000000.bak") && stderr.contains("dotfiles/d"),
+        "refusal must name the path and entry, got: {stderr}"
+    );
+}
+
+// ----- shared targets ----------------------------------------------------
+
+/// Two mappings, different live roots, both explicitly targeting one store
+/// file.
+fn shared_store_fx() -> Fx {
+    let fx = Fx::with_body(
+        concat!(
+            "[mappings.a.links]\n",
+            "\"profile\" = \"shared/profile\"\n\n",
+            "[mappings.b]\n",
+            "live = \"LIVEB\"\n",
+            "[mappings.b.links]\n",
+            "\"prof.d/profile\" = \"shared/profile\"\n"
+        ),
+        "backup",
+    );
+    let live_b = fx.live.parent().unwrap().join("liveB");
+    std::fs::create_dir_all(&live_b).unwrap();
+    let text = fx.config_text().replace("LIVEB", &live_b.to_string_lossy());
+    std::fs::write(&fx.config, text).unwrap();
+    fx
+}
+
+#[test]
+fn shared_store_target_is_noted_not_errored() {
+    let fx = shared_store_fx();
+    fx.write(&fx.sp("shared/profile"), b"content\n");
+
+    // deploy fans out; the note appears; the run is still clean exit 0.
+    let out = fx.cmd("deploy").assert().success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains("note: 2 entries share store path")
+            && stdout.contains("a/profile, b/prof.d/profile"),
+        "got: {stdout}"
+    );
+
+    // status: same note, clean exit; JSON carries the group.
+    let out = fx.cmd("status").arg("--json").assert().success();
+    let doc: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    let st = &doc["shared_targets"][0];
+    assert_eq!(st["side"], "store", "got: {doc}");
+    assert_eq!(st["entries"][0]["mapping"], "a");
+    assert_eq!(st["entries"][1]["key"], "prof.d/profile");
+
+    // diff prints the note too.
+    let out = fx.cmd("diff").assert().success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains("note: 2 entries share store path"),
+        "got: {stdout}"
+    );
+}
+
+#[test]
+fn shared_live_path_is_noted() {
+    // Two entries claiming the same live path (absolute key colliding with a
+    // relative one) — almost always an accident; noted, not blocked.
+    let fx = Fx::with_body(
+        "[mappings.dotfiles.links]\n\"x\" = \"store-x\"\n\"LIVE/x\" = \"store-y\"\n",
+        "backup",
+    );
+    let text = fx
+        .config_text()
+        .replace("LIVE/x", &fx.lp("x").to_string_lossy());
+    std::fs::write(&fx.config, text).unwrap();
+
+    let out = fx.cmd("status").assert(); // exit governed by entry states only
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains("note: 2 entries share live path"),
+        "got: {stdout}"
+    );
+}
+
+#[test]
+fn distinct_targets_produce_no_note() {
+    let fx = Fx::new("backup", &["\"a\" = true", "\"b\" = true"]);
+    let out = fx.cmd("status").assert();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(!stdout.contains("note:"), "got: {stdout}");
 }

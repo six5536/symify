@@ -66,13 +66,19 @@ pub struct StatusEntry {
 ///
 /// ```no_run
 /// use symify_core::{config, RunOptions};
-/// let resolved = config::load_config(&[])?;
+/// let machine = config::MachineContext::with_host("wrk-01");
+/// let resolved = config::load_config(&[], &machine)?;
 /// let entries = symify_core::status::status(&resolved, RunOptions::default())?;
 /// # Ok::<(), symify_core::Error>(())
 /// ```
 pub fn status(config: &ResolvedConfig, opts: RunOptions) -> Result<Vec<StatusEntry>> {
     let mut out = Vec::new();
     for m in &config.mappings {
+        // Inactive mappings (os/host mismatch) report nothing per entry; the
+        // binary renders them as a one-line note.
+        if m.inactive.is_some() {
+            continue;
+        }
         for (key, value) in &m.links {
             let kind = value.kind();
             let (live, store) = crate::plan::resolve_paths(m, key, kind);
@@ -115,7 +121,7 @@ fn label_for(s: &Path, d: &Path, mode: Mode, opts: RunOptions) -> Result<StatusL
                 (_, false) => StatusLabel::Unadopted,
             })
         }
-        Mode::Sync => Ok(match (s_state.is_missing(), d_state.is_missing()) {
+        Mode::Copy => Ok(match (s_state.is_missing(), d_state.is_missing()) {
             (true, true) => StatusLabel::Missing,
             (false, true) => StatusLabel::StoreMissing,
             (true, false) => StatusLabel::LiveMissing,
@@ -135,7 +141,23 @@ mod tests {
     use super::*;
     use crate::config::{ResolvedConfig, ResolvedMapping};
     use crate::model::{Conflict, LinkValue};
-    use std::os::unix::fs::symlink;
+    /// Test symlink on any platform: Unix `symlink`, or the target-kind-aware
+    /// Windows call (CI runners execute elevated, so no privilege issues).
+    fn symlink<P: AsRef<Path>, Q: AsRef<Path>>(target: P, link: Q) -> std::io::Result<()> {
+        #[cfg(unix)]
+        return std::os::unix::fs::symlink(target, link);
+        #[cfg(windows)]
+        {
+            let is_dir = std::fs::metadata(target.as_ref())
+                .map(|m| m.is_dir())
+                .unwrap_or(false);
+            if is_dir {
+                std::os::windows::fs::symlink_dir(target, link)
+            } else {
+                std::os::windows::fs::symlink_file(target, link)
+            }
+        }
+    }
     use std::path::PathBuf;
 
     struct Fx {
@@ -171,6 +193,8 @@ mod tests {
                     mode,
                     conflict: Conflict::Backup,
                     links: links.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+                    inactive: None,
+                    backup_keep: 0,
                 }],
             }
         }
@@ -239,7 +263,7 @@ mod tests {
         std::fs::write(fx.sp("a"), b"x").unwrap();
         match_mtime(&fx.lp("a"), &fx.sp("a")); // in-sync: same content, size, mtime
         assert_eq!(
-            label(&fx.cfg(Mode::Sync, vec![("a", t())])),
+            label(&fx.cfg(Mode::Copy, vec![("a", t())])),
             StatusLabel::Ok
         );
 
@@ -247,13 +271,13 @@ mod tests {
         std::fs::write(fx.lp("b"), b"one").unwrap();
         std::fs::write(fx.sp("b"), b"a-longer-value").unwrap();
         assert_eq!(
-            label(&fx.cfg(Mode::Sync, vec![("b", t())])),
+            label(&fx.cfg(Mode::Copy, vec![("b", t())])),
             StatusLabel::Differs
         );
 
         std::fs::write(fx.lp("c"), b"x").unwrap();
         assert_eq!(
-            label(&fx.cfg(Mode::Sync, vec![("c", t())])),
+            label(&fx.cfg(Mode::Copy, vec![("c", t())])),
             StatusLabel::StoreMissing
         );
     }

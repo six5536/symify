@@ -4,7 +4,7 @@
 //! reads the filesystem but never mutates it, emitting an ordered list of
 //! [`Planned`] entries. Each entry's [`Action`] either records a no-op/blocked
 //! state or carries the exact ordered [`FsOp`]s the executor will run. The
-//! per-entry state machine is documented in `specs/ARCHITECTURE.md`.
+//! per-entry state machine is documented in `knowledge/architecture.md`.
 
 use std::path::{Path, PathBuf};
 
@@ -36,7 +36,7 @@ pub struct RunOptions {
 }
 
 impl RunOptions {
-    /// Compare two `sync`-mode paths for equality under these options: the exact
+    /// Compare two `copy`-mode paths for equality under these options: the exact
     /// [`fs::checksum_equal`] when `--checksum` is set, else the fast
     /// [`fs::quick_equal`] with the configured modify-window.
     pub(crate) fn equal(&self, a: &Path, b: &Path) -> Result<bool> {
@@ -149,13 +149,19 @@ pub struct Planned {
 ///
 /// ```no_run
 /// use symify_core::{config, plan, RunOptions, Verb};
-/// let resolved = config::load_config(&[])?;
+/// let machine = config::MachineContext::with_host("wrk-01");
+/// let resolved = config::load_config(&[], &machine)?;
 /// let planned = plan::plan(&resolved, Verb::Deploy, RunOptions::default())?;
 /// # Ok::<(), symify_core::Error>(())
 /// ```
 pub fn plan(config: &ResolvedConfig, verb: Verb, opts: RunOptions) -> Result<Vec<Planned>> {
     let mut out = Vec::new();
     for mapping in &config.mappings {
+        // An inactive mapping (os/host mismatch) plans nothing; the binary
+        // reports it as a one-line note instead of per-entry rows.
+        if mapping.inactive.is_some() {
+            continue;
+        }
         for (key, value) in &mapping.links {
             out.push(plan_entry(mapping, key, value, verb, opts)?);
         }
@@ -203,7 +209,8 @@ impl Outcome {
 /// ```no_run
 /// use symify_core::{config, plan, RunOptions, Verb};
 /// use symify_core::clock::SystemClock;
-/// let resolved = config::load_config(&[])?;
+/// let machine = config::MachineContext::with_host("wrk-01");
+/// let resolved = config::load_config(&[], &machine)?;
 /// let planned = plan::plan(&resolved, Verb::Sync, RunOptions::default())?;
 /// let outcomes = plan::execute(&planned, &SystemClock, false);
 /// # Ok::<(), symify_core::Error>(())
@@ -268,7 +275,7 @@ fn plan_entry(
     let (s, d) = resolve_paths(m, key, kind);
 
     // Safety guards: refuse entries that could swallow a root or operate on a
-    // directory outside the live root. See `specs/ARCHITECTURE.md` (Safety).
+    // directory outside the live root. See `knowledge/architectural-rules.md`.
     if let Some(reason) = guard_reason(m, &s, &d)? {
         return Ok(make(s, d, Action::Failed(reason)));
     }
@@ -277,7 +284,70 @@ fn plan_entry(
         Verb::Sync => plan_sync(&s, &d, m, opts)?,
         Verb::Deploy => plan_deploy(&s, &d, m, opts)?,
     };
+    let action = apply_retention(action, m.backup_keep)?;
     Ok(make(s, d, action))
+}
+
+/// Enforce `backup_keep` on an action's `Backup` ops: for each fresh backup,
+/// plan `Remove`s for the oldest existing `<name>.<timestamp>.bak` siblings
+/// beyond `keep - 1` (the new backup makes `keep`). `keep == 0` = unlimited.
+/// The removes run last, after the content-preserving ops.
+fn apply_retention(action: Action, keep: u64) -> Result<Action> {
+    if keep == 0 {
+        return Ok(action);
+    }
+    let (kind, mut ops, drift) = match action {
+        Action::Apply { kind, ops } => (kind, ops, false),
+        Action::ApplyDrift { kind, ops } => (kind, ops, true),
+        other => return Ok(other),
+    };
+    let mut removes = Vec::new();
+    for op in &ops {
+        if let FsOp::Backup(target) = op {
+            removes.extend(stale_backups(target, keep)?.into_iter().map(FsOp::Remove));
+        }
+    }
+    ops.extend(removes);
+    Ok(if drift {
+        Action::ApplyDrift { kind, ops }
+    } else {
+        Action::Apply { kind, ops }
+    })
+}
+
+/// The oldest existing backups of `target` beyond `keep - 1`. Matches exactly
+/// `<leaf>.<14 ASCII digits>.bak` beside `target` — the one, narrow exception
+/// to "symify never discovers files" (see `knowledge/architectural-rules.md`):
+/// anchored to the entry's own leaf and symify's own artifact pattern, it can
+/// never match user files, other entries, or hand-renamed backups.
+fn stale_backups(target: &Path, keep: u64) -> Result<Vec<PathBuf>> {
+    let (Some(parent), Some(leaf)) = (target.parent(), target.file_name()) else {
+        return Ok(Vec::new());
+    };
+    let prefix = format!("{}.", leaf.to_string_lossy());
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return Ok(Vec::new()); // no parent directory yet — nothing to prune
+    };
+    let mut names: Vec<String> = Vec::new();
+    for entry in entries {
+        let Ok(entry) = entry else { continue };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let stamp = name
+            .strip_prefix(&prefix)
+            .and_then(|rest| rest.strip_suffix(".bak"));
+        if stamp.is_some_and(|s| s.len() == 14 && s.bytes().all(|b| b.is_ascii_digit())) {
+            names.push(name);
+        }
+    }
+    // Lexicographic order of `YYYYMMDDHHMMSS` stamps is chronological.
+    names.sort();
+    let allowed = (keep as usize).saturating_sub(1);
+    let excess = names.len().saturating_sub(allowed);
+    Ok(names
+        .into_iter()
+        .take(excess)
+        .map(|n| parent.join(n))
+        .collect())
 }
 
 /// Safety check shared by [`plan`] and `status`. Returns a refusal reason when an
@@ -334,6 +404,76 @@ pub fn entry_paths(m: &ResolvedMapping, key: &str, value: &LinkValue) -> (PathBu
     resolve_paths(m, key, value.kind())
 }
 
+// ----- shared targets (collision notes) ----------------------------------
+
+/// Which side of the entries collides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SharedSide {
+    /// Several entries resolve to the same live path — almost always a
+    /// config accident (two things claiming one location).
+    Live,
+    /// Several entries resolve to the same store path — legitimate (one
+    /// source of truth surfaced at several live paths), but hazardous for
+    /// `sync` in copy mode with diverging lives.
+    Store,
+}
+
+/// A group of entries whose resolved paths collide on one side.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedTarget {
+    /// The colliding side.
+    pub side: SharedSide,
+    /// The (lexically normalized) path the entries share.
+    pub path: PathBuf,
+    /// The `(mapping, key)` of each participating entry, in config order.
+    pub entries: Vec<(String, String)>,
+}
+
+/// Group active, non-disabled entries whose resolved paths collide — same
+/// store path (`Store`) or same live path (`Live`), compared lexically
+/// normalized. Purely informational: a note for the binary to render, never
+/// an error, and behaviour of the colliding entries is unchanged. Store
+/// groups come first, each side sorted by path.
+pub fn shared_targets(config: &ResolvedConfig) -> Vec<SharedTarget> {
+    use std::collections::BTreeMap;
+
+    let mut by_live: BTreeMap<PathBuf, Vec<(String, String)>> = BTreeMap::new();
+    let mut by_store: BTreeMap<PathBuf, Vec<(String, String)>> = BTreeMap::new();
+    for m in &config.mappings {
+        if m.inactive.is_some() {
+            continue;
+        }
+        for (key, value) in &m.links {
+            if matches!(value.kind(), LinkKind::Disabled) {
+                continue;
+            }
+            let (live, store) = entry_paths(m, key, value);
+            let entry = (m.name.clone(), key.clone());
+            by_live
+                .entry(fs::normalize(&live))
+                .or_default()
+                .push(entry.clone());
+            by_store
+                .entry(fs::normalize(&store))
+                .or_default()
+                .push(entry);
+        }
+    }
+
+    let groups = |side: SharedSide, map: BTreeMap<PathBuf, Vec<(String, String)>>| {
+        map.into_iter()
+            .filter(|(_, entries)| entries.len() > 1)
+            .map(move |(path, entries)| SharedTarget {
+                side,
+                path,
+                entries,
+            })
+    };
+    groups(SharedSide::Store, by_store)
+        .chain(groups(SharedSide::Live, by_live))
+        .collect()
+}
+
 /// Resolve an entry's `(live, store)` absolute paths from its key and value kind.
 pub(crate) fn resolve_paths(m: &ResolvedMapping, key: &str, kind: LinkKind) -> (PathBuf, PathBuf) {
     let key_path = Path::new(key);
@@ -377,7 +517,7 @@ fn plan_sync(s: &Path, d: &Path, m: &ResolvedMapping, opts: RunOptions) -> Resul
     let s_state = fs::inspect(s)?;
     match m.mode {
         Mode::Symlink => plan_sync_link(s, d, m.conflict, s_state),
-        Mode::Sync => plan_sync_copy(s, d, m.conflict, s_state, opts),
+        Mode::Copy => plan_sync_copy(s, d, m.conflict, s_state, opts),
     }
 }
 
@@ -440,7 +580,7 @@ fn plan_deploy(s: &Path, d: &Path, m: &ResolvedMapping, opts: RunOptions) -> Res
     }
     match m.mode {
         Mode::Symlink => plan_deploy_link(s, d, m.conflict),
-        Mode::Sync => plan_deploy_copy(s, d, m.conflict, opts),
+        Mode::Copy => plan_deploy_copy(s, d, m.conflict, opts),
     }
 }
 
@@ -485,7 +625,7 @@ fn plan_deploy_copy(s: &Path, d: &Path, conflict: Conflict, opts: RunOptions) ->
     diff_copy(d, s, conflict, opts, ActionKind::Pull)
 }
 
-/// Diff a `sync`-mode entry's `src` against `dst` and decide its [`Action`]:
+/// Diff a `copy`-mode entry's `src` against `dst` and decide its [`Action`]:
 /// walk per-file, emitting `Copy`/`Backup`/`Remove` ops only where they differ
 /// (additive — destination-only entries are left untouched). Aggregates an
 /// unresolved `skip`-difference into the drift-bearing outcome.
@@ -558,6 +698,67 @@ fn walk_copy(
     Ok(())
 }
 
+// ----- per-file diff pairs (the `diff` verb) -----------------------------
+
+/// How one file inside an entry differs between the two sides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffState {
+    /// Present on both sides with different content (per the run's
+    /// `--checksum`/`--modify-window` equality options).
+    Differs,
+    /// Present only on the live side.
+    LiveOnly,
+    /// Present only on the store side.
+    StoreOnly,
+}
+
+/// One differing file: the resolved paths on both sides and how they differ.
+/// Read-only data for rendering; no operation is implied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffPair {
+    /// Live-side path.
+    pub live: PathBuf,
+    /// Store-side path.
+    pub store: PathBuf,
+    /// The difference.
+    pub state: DiffState,
+}
+
+/// The per-file differences between an entry's two sides, walking directories
+/// over the union of their (artifact-filtered) entries — symmetric, matching
+/// what [`fs::quick_equal`]'s set comparison calls a difference. Read-only.
+pub fn diff_pairs(live: &Path, store: &Path, opts: RunOptions) -> Result<Vec<DiffPair>> {
+    let mut out = Vec::new();
+    walk_diff(live, store, opts, &mut out)?;
+    Ok(out)
+}
+
+fn walk_diff(live: &Path, store: &Path, opts: RunOptions, out: &mut Vec<DiffPair>) -> Result<()> {
+    let pair = |state| DiffPair {
+        live: live.to_path_buf(),
+        store: store.to_path_buf(),
+        state,
+    };
+    let (l, s) = (fs::inspect(live)?, fs::inspect(store)?);
+    match (l.is_missing(), s.is_missing()) {
+        (true, true) => {}
+        (false, true) => out.push(pair(DiffState::LiveOnly)),
+        (true, false) => out.push(pair(DiffState::StoreOnly)),
+        (false, false) => {
+            if l == NodeKind::Dir && s == NodeKind::Dir {
+                let mut names = fs::dir_entries(live)?;
+                names.extend(fs::dir_entries(store)?);
+                for name in &names {
+                    walk_diff(&live.join(name), &store.join(name), opts, out)?;
+                }
+            } else if !opts.equal(live, store)? {
+                out.push(pair(DiffState::Differs));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn mv(from: &Path, to: &Path) -> FsOp {
     FsOp::Move {
         from: from.to_path_buf(),
@@ -576,7 +777,23 @@ fn cp(from: &Path, to: &Path) -> FsOp {
 mod tests {
     use super::*;
     use crate::config::{ResolvedConfig, ResolvedMapping};
-    use std::os::unix::fs::symlink;
+    /// Test symlink on any platform: Unix `symlink`, or the target-kind-aware
+    /// Windows call (CI runners execute elevated, so no privilege issues).
+    fn symlink<P: AsRef<Path>, Q: AsRef<Path>>(target: P, link: Q) -> std::io::Result<()> {
+        #[cfg(unix)]
+        return std::os::unix::fs::symlink(target, link);
+        #[cfg(windows)]
+        {
+            let is_dir = std::fs::metadata(target.as_ref())
+                .map(|m| m.is_dir())
+                .unwrap_or(false);
+            if is_dir {
+                std::os::windows::fs::symlink_dir(target, link)
+            } else {
+                std::os::windows::fs::symlink_file(target, link)
+            }
+        }
+    }
     use std::path::PathBuf;
     use tempfile::TempDir;
 
@@ -625,6 +842,8 @@ mod tests {
                     mode,
                     conflict,
                     links: links.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+                    inactive: None,
+                    backup_keep: 0,
                 }],
             }
         }
@@ -826,7 +1045,7 @@ mod tests {
         let fx = Fx::new();
         fx.write(&fx.lp("x"), b"data");
         let a = act(
-            &fx.cfg(Mode::Sync, Conflict::Backup, vec![("x", t())]),
+            &fx.cfg(Mode::Copy, Conflict::Backup, vec![("x", t())]),
             Verb::Sync,
         );
         assert_eq!(
@@ -878,7 +1097,7 @@ mod tests {
         match_mtime(&fx.lp("x"), &fx.sp("x")); // in sync: same content, size, mtime
         assert_eq!(
             act(
-                &fx.cfg(Mode::Sync, Conflict::Backup, vec![("x", t())]),
+                &fx.cfg(Mode::Copy, Conflict::Backup, vec![("x", t())]),
                 Verb::Sync
             ),
             Action::AlreadyOk
@@ -891,7 +1110,7 @@ mod tests {
         synced_dir(&fx);
         assert_eq!(
             act(
-                &fx.cfg(Mode::Sync, Conflict::Backup, vec![("dir", t())]),
+                &fx.cfg(Mode::Copy, Conflict::Backup, vec![("dir", t())]),
                 Verb::Sync
             ),
             Action::AlreadyOk
@@ -907,7 +1126,7 @@ mod tests {
         fx.write(&fx.lp("dir/b"), b"b-changed-bigger"); // different size → detected
         assert_eq!(
             act(
-                &fx.cfg(Mode::Sync, Conflict::Replace, vec![("dir", t())]),
+                &fx.cfg(Mode::Copy, Conflict::Replace, vec![("dir", t())]),
                 Verb::Sync
             ),
             Action::Apply {
@@ -927,7 +1146,7 @@ mod tests {
         fx.write(&fx.lp("dir/c"), b"c"); // brand-new, absent in store
         assert_eq!(
             act(
-                &fx.cfg(Mode::Sync, Conflict::Backup, vec![("dir", t())]),
+                &fx.cfg(Mode::Copy, Conflict::Backup, vec![("dir", t())]),
                 Verb::Sync
             ),
             Action::Apply {
@@ -947,7 +1166,7 @@ mod tests {
         fx.write(&fx.lp("dir/b"), b"b-changed-bigger"); // differs → skipped (drift)
         assert_eq!(
             act(
-                &fx.cfg(Mode::Sync, Conflict::Skip, vec![("dir", t())]),
+                &fx.cfg(Mode::Copy, Conflict::Skip, vec![("dir", t())]),
                 Verb::Sync
             ),
             Action::ApplyDrift {
@@ -965,7 +1184,7 @@ mod tests {
         // Additive: store-only files are never pruned — nothing to do.
         assert_eq!(
             act(
-                &fx.cfg(Mode::Sync, Conflict::Replace, vec![("dir", t())]),
+                &fx.cfg(Mode::Copy, Conflict::Replace, vec![("dir", t())]),
                 Verb::Sync
             ),
             Action::AlreadyOk
@@ -980,7 +1199,7 @@ mod tests {
         fx.write(&fx.lp("dir/old.20260101.bak"), b"backup");
         assert_eq!(
             act(
-                &fx.cfg(Mode::Sync, Conflict::Backup, vec![("dir", t())]),
+                &fx.cfg(Mode::Copy, Conflict::Backup, vec![("dir", t())]),
                 Verb::Sync
             ),
             Action::AlreadyOk
@@ -998,7 +1217,7 @@ mod tests {
         let later = mtime(&fx.lp("x")) + std::time::Duration::from_secs(5);
         set_mtime(&fx.lp("x"), later);
 
-        let cfg = fx.cfg(Mode::Sync, Conflict::Replace, vec![("x", t())]);
+        let cfg = fx.cfg(Mode::Copy, Conflict::Replace, vec![("x", t())]);
         // Default quick-check: mtime drift → re-sync.
         assert!(matches!(act(&cfg, Verb::Sync), Action::Apply { .. }));
         // --checksum: content identical → already ok.
@@ -1018,7 +1237,7 @@ mod tests {
         let skewed = mtime(&fx.sp("x")) + std::time::Duration::from_secs(1);
         set_mtime(&fx.sp("x"), skewed);
 
-        let cfg = fx.cfg(Mode::Sync, Conflict::Replace, vec![("x", t())]);
+        let cfg = fx.cfg(Mode::Copy, Conflict::Replace, vec![("x", t())]);
         // Exact (window 0): 1s skew counts as a difference.
         assert!(matches!(act(&cfg, Verb::Sync), Action::Apply { .. }));
         // window 1: tolerated as equal.
@@ -1130,7 +1349,7 @@ mod tests {
         let fx = Fx::new();
         fx.write(&fx.sp("x"), b"data");
         let a = act(
-            &fx.cfg(Mode::Sync, Conflict::Backup, vec![("x", t())]),
+            &fx.cfg(Mode::Copy, Conflict::Backup, vec![("x", t())]),
             Verb::Deploy,
         );
         assert_eq!(
@@ -1152,7 +1371,7 @@ mod tests {
         fx.write(&fx.lp("x"), b"live");
         assert_eq!(
             act(
-                &fx.cfg(Mode::Sync, Conflict::Skip, vec![("x", t())]),
+                &fx.cfg(Mode::Copy, Conflict::Skip, vec![("x", t())]),
                 Verb::Deploy
             ),
             Action::Conflict
@@ -1222,6 +1441,8 @@ mod tests {
                 mode: Mode::Symlink,
                 conflict: Conflict::Backup,
                 links: vec![("sub".to_string(), t())],
+                inactive: None,
+                backup_keep: 0,
             }],
         };
         assert!(matches!(act(&cfg, Verb::Sync), Action::Failed(_)));
@@ -1251,6 +1472,90 @@ mod tests {
                 ],
             }
         );
+    }
+
+    // ---- shared targets ----
+
+    /// A mapping literal for shared-target tests; paths need not exist
+    /// (the helper never touches the filesystem).
+    fn st_mapping(name: &str, live: &str, links: Vec<(&str, LinkValue)>) -> ResolvedMapping {
+        ResolvedMapping {
+            name: name.into(),
+            live: live.into(),
+            store: "/store".into(),
+            mode: Mode::Symlink,
+            conflict: Conflict::Backup,
+            links: links.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+            inactive: None,
+            backup_keep: 0,
+        }
+    }
+
+    fn s(v: &str) -> LinkValue {
+        LinkValue::String(v.into())
+    }
+
+    #[test]
+    fn shared_targets_groups_store_and_live_collisions() {
+        let mut b = st_mapping("b", "/liveB", vec![("prof.d/profile", s("shared/profile"))]);
+        // Normalization-equivalent spelling must still collide.
+        b.store = "/x/../store".into();
+        let cfg = ResolvedConfig {
+            mappings: vec![
+                st_mapping(
+                    "a",
+                    "/liveA",
+                    vec![
+                        ("profile", s("shared/profile")),
+                        ("solo", LinkValue::Boolean(true)),
+                    ],
+                ),
+                b,
+                // Two entries claiming one live path via an absolute key.
+                st_mapping(
+                    "c",
+                    "/liveC",
+                    vec![("/tmp/one", s("c1")), ("sub/../../tmp/one", s("c2"))],
+                ),
+            ],
+        };
+        let groups = shared_targets(&cfg);
+        assert_eq!(groups.len(), 2, "got: {groups:?}");
+
+        // Store groups first.
+        assert_eq!(groups[0].side, SharedSide::Store);
+        assert_eq!(groups[0].path, PathBuf::from("/store/shared/profile"));
+        assert_eq!(
+            groups[0].entries,
+            vec![
+                ("a".to_string(), "profile".to_string()),
+                ("b".to_string(), "prof.d/profile".to_string()),
+            ]
+        );
+
+        assert_eq!(groups[1].side, SharedSide::Live);
+        assert_eq!(groups[1].path, PathBuf::from("/tmp/one"));
+        assert_eq!(groups[1].entries.len(), 2);
+    }
+
+    #[test]
+    fn shared_targets_skip_disabled_and_inactive() {
+        let mut inactive = st_mapping("off", "/liveB", vec![("x", s("shared"))]);
+        inactive.inactive = Some(crate::config::InactiveReason::Os);
+        let cfg = ResolvedConfig {
+            mappings: vec![
+                st_mapping(
+                    "a",
+                    "/liveA",
+                    vec![("x", s("shared")), ("y", LinkValue::Boolean(false))],
+                ),
+                // The disabled `y` would mirror to /store/y like this one; the
+                // inactive mapping's entry would collide on /store/shared.
+                st_mapping("z", "/liveC", vec![("y", LinkValue::Boolean(true))]),
+                inactive,
+            ],
+        };
+        assert_eq!(shared_targets(&cfg), vec![], "disabled + inactive excluded");
     }
 
     // ---- helpers exercised directly (not just via plan) ----

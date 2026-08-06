@@ -7,6 +7,7 @@
 
 mod cli;
 mod confirm;
+mod man;
 mod output;
 
 use std::io;
@@ -15,10 +16,11 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser};
 use symify_core::clock::SystemClock;
-use symify_core::config::{ResolvedConfig, ResolvedMapping};
+use symify_core::config::{MachineContext, ResolvedConfig, ResolvedMapping};
 use symify_core::model::{LinkValue, Mode};
 use symify_core::{
-    Action, Error, FsOp, RunOptions, Verb, config, edit, entry_paths, execute, fs, plan, status,
+    Action, Error, FsOp, RunOptions, StatusLabel, Verb, config, edit, entry_paths, execute, fs,
+    plan, status,
 };
 
 use crate::cli::{
@@ -28,11 +30,21 @@ use crate::cli::{
 fn main() -> ExitCode {
     match run() {
         Ok(code) => ExitCode::from(code),
+        // A downstream reader went away (`| head`, a pager quit early). That is
+        // not our failure, so say nothing and exit clean, the same as ripgrep and
+        // friends. Rust sets SIGPIPE to SIG_IGN, so this reaches us as an EPIPE
+        // write error instead of killing the process.
+        Err(e) if is_broken_pipe(&e) => ExitCode::from(output::EXIT_OK),
         Err(e) => {
             eprintln!("error: {e}");
             ExitCode::from(output::EXIT_FAILURE)
         }
     }
+}
+
+/// Whether an error is just a closed downstream pipe rather than a real fault.
+fn is_broken_pipe(e: &Error) -> bool {
+    matches!(e, Error::Io { source, .. } if source.kind() == io::ErrorKind::BrokenPipe)
 }
 
 fn run() -> symify_core::Result<u8> {
@@ -56,6 +68,7 @@ fn run() -> symify_core::Result<u8> {
         Command::Sync(args) => run_verb(Verb::Sync, args),
         Command::Deploy(args) => run_verb(Verb::Deploy, args),
         Command::Status(args) => run_status(args),
+        Command::Diff(args) => run_diff(args),
         Command::Add(args) => run_add(args),
         Command::Remove(args) => run_remove(args),
         Command::List(args) => run_list(args),
@@ -68,16 +81,31 @@ fn run() -> symify_core::Result<u8> {
 fn run_completions(args: CompletionsArgs) -> symify_core::Result<u8> {
     let mut cmd = Cli::command();
     let name = cmd.get_name().to_string();
-    clap_complete::generate(args.shell, &mut cmd, name, &mut io::stdout());
+    // Rendered into a buffer rather than straight to stdout: `generate` returns
+    // `()` and `expect()`s its writes internally, so handing it a closed pipe
+    // aborts the process (`panic = "abort"`) instead of surfacing an error we
+    // can classify. Writing the finished buffer ourselves keeps that in our hands.
+    let mut buf = Vec::new();
+    clap_complete::generate(args.shell, &mut cmd, name, &mut buf);
+    write_stdout(&buf)?;
     Ok(output::EXIT_OK)
 }
 
 /// Write a roff man page to stdout, for packaging into release archives.
 fn run_man() -> symify_core::Result<u8> {
-    clap_mangen::Man::new(Cli::command())
-        .render(&mut io::stdout())
-        .map_err(stdout_err)?;
+    let buf = man::render().map_err(stdout_err)?;
+    write_stdout(&buf)?;
     Ok(output::EXIT_OK)
+}
+
+/// Write a fully-rendered buffer to stdout and flush it. The explicit flush
+/// matters: the runtime's flush at exit discards its error, which made a broken
+/// pipe surface only when the buffer happened to fill mid-render.
+fn write_stdout(bytes: &[u8]) -> symify_core::Result<()> {
+    use io::Write as _;
+    let mut out = io::stdout().lock();
+    out.write_all(bytes).map_err(stdout_err)?;
+    out.flush().map_err(stdout_err)
 }
 
 /// Whether a command mutates the filesystem or config (so it should be refused
@@ -122,6 +150,67 @@ fn is_root() -> bool {
     false
 }
 
+/// The machine identity `os`/`host` mapping conditions are matched against.
+fn machine_context() -> MachineContext {
+    MachineContext::with_host(hostname())
+}
+
+/// The system hostname. Like `geteuid` above, POSIX `gethostname(2)` is
+/// declared directly rather than through a `libc` dependency. An unlikely
+/// failure yields an empty hostname, which no non-empty pattern matches.
+/// Excluded from coverage: the failure path can't be driven from a test.
+#[cfg(unix)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn hostname() -> String {
+    unsafe extern "C" {
+        fn gethostname(name: *mut core::ffi::c_char, len: usize) -> core::ffi::c_int;
+    }
+    // 255 bytes is the practical POSIX ceiling (HOST_NAME_MAX); the +1 keeps
+    // the result NUL-terminated even when the name fills the limit.
+    let mut buf = [0u8; 256];
+    if unsafe { gethostname(buf.as_mut_ptr().cast(), buf.len()) } != 0 {
+        return String::new();
+    }
+    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    String::from_utf8_lossy(&buf[..len]).into_owned()
+}
+
+/// The DNS hostname via `GetComputerNameExW`, declared directly like the Unix
+/// syscalls above. Not `COMPUTERNAME`: that is the NetBIOS name — uppercase,
+/// 15 characters max — so `host` patterns that match on Unix would silently
+/// miss on Windows. The DNS hostname is the closest analogue of the Unix
+/// nodename; `COMPUTERNAME` remains the fallback if the call fails.
+#[cfg(windows)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn hostname() -> String {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetComputerNameExW(name_type: u32, buffer: *mut u16, size: *mut u32) -> i32;
+    }
+    const COMPUTER_NAME_PHYSICAL_DNS_HOSTNAME: u32 = 5;
+    let mut buf = [0u16; 256];
+    let mut len = buf.len() as u32;
+    let ok = unsafe {
+        GetComputerNameExW(
+            COMPUTER_NAME_PHYSICAL_DNS_HOSTNAME,
+            buf.as_mut_ptr(),
+            &mut len,
+        )
+    } != 0;
+    if ok {
+        return String::from_utf16_lossy(&buf[..len as usize]);
+    }
+    std::env::var("COMPUTERNAME").unwrap_or_default()
+}
+
+/// Neither Unix nor Windows: no portable hostname source; empty matches no
+/// non-empty pattern.
+#[cfg(not(any(unix, windows)))]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn hostname() -> String {
+    String::new()
+}
+
 /// Discover (auto-initing a default config if needed), then load + resolve.
 /// Returns the config file set and the resolved config.
 fn load_set(config: &[PathBuf]) -> symify_core::Result<(Vec<PathBuf>, ResolvedConfig)> {
@@ -130,7 +219,7 @@ fn load_set(config: &[PathBuf]) -> symify_core::Result<(Vec<PathBuf>, ResolvedCo
         // To stderr so it never pollutes `--json` output on stdout.
         eprintln!("Created {} (defaults).", created.display());
     }
-    let resolved = config::resolve(config::load(&discovered.paths)?)?;
+    let resolved = config::resolve(config::load(&discovered.paths)?, &machine_context())?;
     Ok((discovered.paths, resolved))
 }
 
@@ -153,6 +242,7 @@ fn run_verb(verb: Verb, args: RunArgs) -> symify_core::Result<u8> {
         args.dry_run,
         &planned,
         &outcomes,
+        &output::Notes::from_config(&cfg),
         args.json,
     )
     .map_err(stdout_err)
@@ -165,8 +255,42 @@ fn run_status(args: QueryArgs) -> symify_core::Result<u8> {
         checksum: args.checksum,
         modify_window: args.modify_window,
     };
-    output::render_status(&mut io::stdout().lock(), &status(&cfg, opts)?, args.json)
-        .map_err(stdout_err)
+    output::render_status(
+        &mut io::stdout().lock(),
+        &status(&cfg, opts)?,
+        &output::Notes::from_config(&cfg),
+        args.json,
+    )
+    .map_err(stdout_err)
+}
+
+fn run_diff(args: QueryArgs) -> symify_core::Result<u8> {
+    let (_, resolved) = load_set(&args.config)?;
+    let cfg = config::select(resolved, &args.mapping)?;
+    let opts = RunOptions {
+        checksum: args.checksum,
+        modify_window: args.modify_window,
+    };
+    let entries = status(&cfg, opts)?;
+    // Per-file pairs only for the states that have content on both sides to
+    // compare; every other label renders from the entry itself.
+    let mut pairs = Vec::with_capacity(entries.len());
+    for e in &entries {
+        pairs.push(match e.label {
+            StatusLabel::Differs | StatusLabel::Unadopted => {
+                symify_core::diff_pairs(&e.live, &e.store, opts)?
+            }
+            _ => Vec::new(),
+        });
+    }
+    output::render_diff(
+        &mut io::stdout().lock(),
+        &entries,
+        &pairs,
+        &output::Notes::from_config(&cfg),
+        args.json,
+    )
+    .map_err(stdout_err)
 }
 
 fn run_list(args: ListArgs) -> symify_core::Result<u8> {
@@ -187,6 +311,7 @@ fn run_add(args: AddArgs) -> symify_core::Result<u8> {
         Some(n) => n.clone(),
         None => sole_mapping(&resolved)?,
     };
+    refuse_inactive(&resolved, &mapping_name)?;
 
     // The mapping's live root (existing mapping, or [settings] for a new one).
     let live = match resolved.mappings.iter().find(|m| m.name == mapping_name) {
@@ -222,7 +347,7 @@ fn run_add(args: AddArgs) -> symify_core::Result<u8> {
         .or_default()
         .links
         .insert(key.clone(), value.clone());
-    let resolved2 = config::resolve(raw2)?;
+    let resolved2 = config::resolve(raw2, &machine_context())?;
     let m2 = resolved2
         .mappings
         .iter()
@@ -297,6 +422,7 @@ fn run_remove(args: RemoveArgs) -> symify_core::Result<u8> {
         .iter()
         .find(|m| m.name == mapping_name)
         .ok_or_else(|| Error::config(format!("unknown mapping `{mapping_name}`")))?;
+    refuse_inactive(&resolved, &mapping_name)?;
 
     let abs = config::expand_root(&args.path.to_string_lossy())?;
     let key = derive_key(&abs, &m.live);
@@ -338,6 +464,24 @@ fn run_remove(args: RemoveArgs) -> symify_core::Result<u8> {
 }
 
 // ----- helpers -----------------------------------------------------------
+
+/// `add`/`remove` refuse an inactive mapping: their adopt/restore half cannot
+/// act on this machine. Cross-machine config maintenance is a hand edit.
+fn refuse_inactive(resolved: &ResolvedConfig, name: &str) -> symify_core::Result<()> {
+    let inactive = resolved
+        .mappings
+        .iter()
+        .find(|m| m.name == name)
+        .and_then(|m| m.inactive);
+    match inactive {
+        Some(reason) => Err(Error::config(format!(
+            "mapping `{name}` is inactive on this machine (its `{}` condition \
+             does not match); edit the config file directly to change it",
+            reason.key()
+        ))),
+        None => Ok(()),
+    }
+}
 
 fn sole_mapping(resolved: &ResolvedConfig) -> symify_core::Result<String> {
     match resolved.mappings.as_slice() {
@@ -387,7 +531,7 @@ fn would_restore(s: &Path, d: &Path, mode: Mode) -> symify_core::Result<bool> {
     }
     Ok(match mode {
         Mode::Symlink => fs::symlink_points_to(s, d)?,
-        Mode::Sync => false,
+        Mode::Copy => false,
     })
 }
 
@@ -408,8 +552,55 @@ mod tests {
     use super::*;
     use symify_core::model::Conflict;
 
+    /// Test symlink on any platform: Unix `symlink`, or the target-kind-aware
+    /// Windows call (CI runners execute elevated, so no privilege issues).
+    fn symlink<P: AsRef<Path>, Q: AsRef<Path>>(target: P, link: Q) -> std::io::Result<()> {
+        #[cfg(unix)]
+        return std::os::unix::fs::symlink(target, link);
+        #[cfg(windows)]
+        {
+            let is_dir = std::fs::metadata(target.as_ref())
+                .map(|m| m.is_dir())
+                .unwrap_or(false);
+            if is_dir {
+                std::os::windows::fs::symlink_dir(target, link)
+            } else {
+                std::os::windows::fs::symlink_file(target, link)
+            }
+        }
+    }
+
     fn cmd(args: &[&str]) -> Command {
         Cli::try_parse_from(args).unwrap().command.unwrap()
+    }
+
+    #[test]
+    fn broken_pipe_is_the_only_error_treated_as_clean() {
+        let epipe = Error::io(
+            Path::new("<stdout>"),
+            io::Error::new(io::ErrorKind::BrokenPipe, "Broken pipe"),
+        );
+        assert!(is_broken_pipe(&epipe));
+
+        // Any other I/O failure is a real one, however similar it looks.
+        for kind in [
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::NotFound,
+            io::ErrorKind::WriteZero,
+        ] {
+            let e = Error::io(Path::new("<stdout>"), io::Error::new(kind, "nope"));
+            assert!(!is_broken_pipe(&e), "{kind:?} must not be swallowed");
+        }
+        // Nor is a non-I/O error, which has no `kind` to inspect at all.
+        assert!(!is_broken_pipe(&Error::config("bad mapping")));
+    }
+
+    #[test]
+    fn write_stdout_round_trips_bytes() {
+        // Captured by the test harness; the point is that it reports success
+        // rather than panicking, and handles an empty buffer.
+        assert!(write_stdout(b"symify\n").is_ok());
+        assert!(write_stdout(b"").is_ok());
     }
 
     #[test]
@@ -436,6 +627,7 @@ mod tests {
         assert!(is_mutating(&cmd(&["symify", "add", "/tmp/x"])));
         assert!(is_mutating(&cmd(&["symify", "remove", "/tmp/x"])));
         assert!(!is_mutating(&cmd(&["symify", "status"])));
+        assert!(!is_mutating(&cmd(&["symify", "diff"])));
         assert!(!is_mutating(&cmd(&["symify", "list"])));
     }
 
@@ -481,6 +673,8 @@ mod tests {
             mode: Mode::Symlink,
             conflict: Conflict::Backup,
             links: vec![],
+            inactive: None,
+            backup_keep: 0,
         }
     }
 
@@ -491,12 +685,12 @@ mod tests {
         let store = dir.path().join("store_f");
         let live = dir.path().join("live_f");
         std::fs::write(&store, b"content").unwrap();
-        std::os::unix::fs::symlink(&store, &live).unwrap();
+        symlink(&store, &live).unwrap();
 
         // Symlink mode: a live link pointing at store would be restored.
         assert!(would_restore(&live, &store, Mode::Symlink).unwrap());
-        // Sync mode keeps independent copies — never "restores".
-        assert!(!would_restore(&live, &store, Mode::Sync).unwrap());
+        // Copy mode keeps independent copies — never "restores".
+        assert!(!would_restore(&live, &store, Mode::Copy).unwrap());
         // A missing store side short-circuits to false.
         let missing_store = dir.path().join("gone");
         assert!(!would_restore(&live, &missing_store, Mode::Symlink).unwrap());

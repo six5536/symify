@@ -1,6 +1,6 @@
 //! symify core: config loading, planning, and filesystem execution.
 //!
-//! See `specs/ARCHITECTURE.md` for the design. The crate is layered:
+//! See `knowledge/architecture.md` for the design. The crate is layered:
 //! [`config`] loads and merges TOML into a resolved model, [`mod@plan`] turns
 //! that plus current filesystem state into a pure list of actions, and the
 //! executor applies them. The planner never mutates the filesystem.
@@ -32,7 +32,8 @@
 //!     store.display(),
 //! ))?;
 //!
-//! let resolved = config::load_config(&[cfg])?;
+//! let machine = config::MachineContext::with_host("wrk-01");
+//! let resolved = config::load_config(&[cfg], &machine)?;
 //! let planned = plan::plan(&resolved, Verb::Sync, RunOptions::default())?;
 //! let outcomes = plan::execute(&planned, &SystemClock, /* dry_run = */ true);
 //! assert_eq!(outcomes.len(), planned.len());
@@ -52,6 +53,7 @@ pub mod status;
 
 pub use error::{Error, Result};
 pub use plan::{
-    Action, ActionKind, FsOp, Outcome, Planned, RunOptions, Verb, entry_paths, execute, plan,
+    Action, ActionKind, DiffPair, DiffState, FsOp, Outcome, Planned, RunOptions, SharedSide,
+    SharedTarget, Verb, diff_pairs, entry_paths, execute, plan, shared_targets,
 };
 pub use status::{StatusEntry, StatusLabel, status};
