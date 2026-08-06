@@ -15,6 +15,9 @@ links:
   - rel: references
     to: api-contracts
     note: Auto-init and -c/--config behaviour at the CLI.
+  - rel: references
+    to: architectural-rules
+    note: The backup_keep discovery carve-out.
 ---
 
 # Roots and structure

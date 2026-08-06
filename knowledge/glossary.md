@@ -56,6 +56,8 @@ Terms as used throughout the project; mechanics in
   compare.
 - **additive** — the `copy`-mode property: only changed files are
   copied, destination-only files are never deleted.
+- **shared target** — several entries resolving to the same store (or live)
+  path; reported by the verbs as a one-line note, never an error.
 - **AlreadyOk** — the planner's no-op action for an entry already in its
   desired state.
 - **auto-init** — any config-reading verb creates the default config from the

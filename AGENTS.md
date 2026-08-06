@@ -11,7 +11,7 @@ Read the AOKF specification:
 
 ## Canonical Project Knowledge
 
-All canonical project knowledge is stored in the AOKF bundle:
+Store all canonical project knowledge in the AOKF bundle:
 @knowledge/index.md
 
 ### Core Concepts
