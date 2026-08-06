@@ -439,6 +439,25 @@ fn man_renders_roff_with_version() {
         "man page should carry the version, got: {stdout}"
     );
     assert!(stdout.contains(".SH NAME"), "got: {stdout}");
+    // Per-verb sections: every visible verb gets an .SS with its own flags.
+    for verb in ["sync", "deploy", "status", "diff", "add", "remove", "list"] {
+        assert!(
+            stdout.contains(&format!(".SS \"symify {verb}")),
+            "man page should document `{verb}`, got: {stdout}"
+        );
+    }
+    assert!(!stdout.contains(".SS \"symify man"), "man stays hidden");
+    for needle in [
+        "\\-\\-dry\\-run",
+        "\\-\\-checksum",
+        "\\-\\-modify\\-window\\fR \\fI<SECONDS>",
+        "\\-\\-store\\-path",
+        ".SH EXIT STATUS",
+        ".SH FILES",
+        "symify.toml",
+    ] {
+        assert!(stdout.contains(needle), "missing {needle:?} in: {stdout}");
+    }
 }
 
 #[test]

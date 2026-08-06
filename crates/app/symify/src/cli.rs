@@ -9,6 +9,12 @@ use clap::{Args, Parser, Subcommand};
 // `version` feeds the man page header and `--help`; the built-in `-V` flag stays
 // disabled because we render the version ourselves (see `main::run`).
 #[command(name = "symify", about, long_about = None, version, disable_version_flag = true)]
+#[command(
+    after_help = "Config: ~/.config/symify/symify.toml plus conf.d/*.toml drop-ins, \
+    created on first use; -c/--config replaces discovery.\n\
+    Exit codes: 0 clean, 1 drift, 2 error.\n\
+    Docs: https://github.com/six5536/symify"
+)]
 pub struct Cli {
     /// The command to run.
     #[command(subcommand)]

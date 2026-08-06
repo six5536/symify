@@ -57,7 +57,8 @@ Depends on `symify-core`. Binary name `symify`.
 | `main.rs` | Entry point, wiring, exit codes. |
 | `cli`     | Argument parsing (`clap` derive), including the bare-path shortcut. |
 | `confirm` | The `[y/N]` gate for unrecoverable deletes; keeps the prompt out of the pure planner. |
-| `output`  | Renders a single `serde`-serializable per-entry result model via two renderers — human and `--json`. |
+| `man`     | Man page rendering: `clap_mangen`'s top-level sections plus hand-written roff for per-verb COMMANDS, EXIT STATUS, and FILES. |
+| `output`  | Renders the `serde`-serializable result models (run/status/diff/list, plus inactive and shared-target notes) via two renderers — human and `--json`. |
 
 # Publishing
 

@@ -7,6 +7,7 @@
 
 mod cli;
 mod confirm;
+mod man;
 mod output;
 
 use std::io;
@@ -92,10 +93,7 @@ fn run_completions(args: CompletionsArgs) -> symify_core::Result<u8> {
 
 /// Write a roff man page to stdout, for packaging into release archives.
 fn run_man() -> symify_core::Result<u8> {
-    let mut buf = Vec::new();
-    clap_mangen::Man::new(Cli::command())
-        .render(&mut buf)
-        .map_err(stdout_err)?;
+    let buf = man::render().map_err(stdout_err)?;
     write_stdout(&buf)?;
     Ok(output::EXIT_OK)
 }
