@@ -151,7 +151,7 @@ the store-side path (real content).
 | Input | Result |
 |-------|--------|
 | `key` relative | `S = live_root / key` |
-| `key` absolute | `S = key` as-is; the mirrored `D` strips the leading `/` and joins under `store_root` |
+| `key` absolute | `S = key` as-is; the mirrored `D` strips the root (leading `/`, plus the drive prefix on Windows) and joins under `store_root` |
 | `value = ""` or `value = true` | mirror: `D = store_root / key` |
 | `value = "<relative>"` | explicit: `D = store_root / <relative>` |
 | `value = "<absolute>"` | explicit: `D = <absolute>` as-is |

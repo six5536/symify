@@ -6,7 +6,7 @@
 //! state or carries the exact ordered [`FsOp`]s the executor will run. The
 //! per-entry state machine is documented in `knowledge/architecture.md`.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::Result;
 use crate::clock::Clock;
@@ -360,11 +360,21 @@ fn stale_backups(target: &Path, keep: u64) -> Result<Vec<PathBuf>> {
 /// - **B (out-of-root ⇒ file-only):** anything resolving outside the live root
 ///   must be a single file, not a directory, on either side (blocks adopting or
 ///   deploying whole trees such as `/etc`).
+/// - **same-file:** live and store resolve to the same path (a self-mapping
+///   like `"/x" = "/x"` — acting on it would replace the file with a link to
+///   itself, destroying the content).
 pub(crate) fn guard_reason(m: &ResolvedMapping, s: &Path, d: &Path) -> Result<Option<String>> {
     let ns = fs::normalize(s);
     let nd = fs::normalize(d);
     let nlive = fs::normalize(&m.live);
     let nstore = fs::normalize(&m.store);
+
+    if ns == nd {
+        return Ok(Some(format!(
+            "refusing: live and store resolve to the same path ({})",
+            ns.display()
+        )));
+    }
 
     let mut sentinels = vec![nlive.clone(), nstore.clone(), PathBuf::from("/")];
     if let Ok(home) = crate::config::home_dir() {
@@ -475,9 +485,13 @@ pub fn shared_targets(config: &ResolvedConfig) -> Vec<SharedTarget> {
 }
 
 /// Resolve an entry's `(live, store)` absolute paths from its key and value kind.
+///
+/// `has_root`, not `is_absolute`: on Windows a `/etc/x`-style key has a root
+/// but no drive prefix, so `is_absolute` is false and `join` would splice it
+/// onto the live/store drive — making both sides resolve to the same path.
 pub(crate) fn resolve_paths(m: &ResolvedMapping, key: &str, kind: LinkKind) -> (PathBuf, PathBuf) {
     let key_path = Path::new(key);
-    let live = if key_path.is_absolute() {
+    let live = if key_path.has_root() {
         key_path.to_path_buf()
     } else {
         m.live.join(key)
@@ -485,15 +499,15 @@ pub(crate) fn resolve_paths(m: &ResolvedMapping, key: &str, kind: LinkKind) -> (
 
     let store = match kind {
         LinkKind::Mirror | LinkKind::Disabled => {
-            if key_path.is_absolute() {
-                m.store.join(key.trim_start_matches('/'))
+            if key_path.has_root() {
+                m.store.join(strip_root(key_path))
             } else {
                 m.store.join(key)
             }
         }
         LinkKind::Explicit(p) => {
             let pp = Path::new(p);
-            if pp.is_absolute() {
+            if pp.has_root() {
                 pp.to_path_buf()
             } else {
                 m.store.join(p)
@@ -502,6 +516,15 @@ pub(crate) fn resolve_paths(m: &ResolvedMapping, key: &str, kind: LinkKind) -> (
     };
 
     (live, store)
+}
+
+/// A rooted path with its root removed (`/etc/hosts` → `etc/hosts`; on
+/// Windows `C:\tools\x` → `tools\x`), so a mirror key nests under the store
+/// root instead of `join` replacing it.
+fn strip_root(p: &Path) -> PathBuf {
+    p.components()
+        .filter(|c| !matches!(c, Component::Prefix(_) | Component::RootDir))
+        .collect()
 }
 
 fn link_op(s: &Path, d: &Path) -> FsOp {
@@ -1582,6 +1605,40 @@ mod tests {
         // Explicit value redirects the store side.
         let (_, s) = resolve_paths(&m, "profile", LinkKind::Explicit("fixed/p"));
         assert_eq!(s, fx.sp("fixed/p"));
+    }
+
+    /// A native absolute key (with a drive prefix on Windows) must nest under
+    /// the store root on the mirror side — before `strip_root`, `join` with an
+    /// absolute path replaced the store root, making store == live.
+    #[test]
+    fn resolve_paths_native_absolute_key_nests_under_store() {
+        let fx = Fx::new();
+        let m = one_mapping(&fx);
+        let outside = fx.live.parent().unwrap().join("outside.txt");
+        let key = outside.display().to_string();
+        let (l, s) = resolve_paths(&m, &key, LinkKind::Mirror);
+        assert_eq!(l, outside);
+        assert_ne!(s, l, "store side must never equal the live side");
+        assert!(
+            s.starts_with(&fx.store),
+            "store side {} must nest under the store root {}",
+            s.display(),
+            fx.store.display()
+        );
+        assert!(s.ends_with("outside.txt"));
+    }
+
+    #[test]
+    fn guard_reason_refuses_same_file_entries() {
+        let fx = Fx::new();
+        let m = one_mapping(&fx);
+        let p = fx.lp("self");
+        assert!(
+            guard_reason(&m, &p, &p)
+                .unwrap()
+                .unwrap()
+                .contains("same path")
+        );
     }
 
     #[test]

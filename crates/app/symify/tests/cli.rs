@@ -304,7 +304,22 @@ fn add_file_outside_live_uses_absolute_key() {
 
     fx.cmd("add").arg(&outside).assert().success();
     assert!(is_symlink(&outside)); // adopted in place via an absolute key
-    assert!(fx.config_text().contains(&outside.display().to_string()));
+    // toml_edit writes the absolute key as a basic string, so on Windows the
+    // config carries the backslash-escaped form.
+    assert!(fx.config_text().contains(&toml_path(&outside)));
+    // The content must land nested under the store root (root/drive stripped),
+    // not at the key's own path — that would make store == live and lose the
+    // file to a self-link.
+    let nested: PathBuf = outside
+        .components()
+        .filter(|c| {
+            !matches!(
+                c,
+                std::path::Component::Prefix(_) | std::path::Component::RootDir
+            )
+        })
+        .collect();
+    assert_eq!(std::fs::read(fx.store.join(nested)).unwrap(), b"o");
 }
 
 #[test]

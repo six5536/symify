@@ -57,6 +57,12 @@ publish a version it cannot find a heading for.
 
 ### Fixed
 
+- Absolute keys resolve correctly on Windows: the mirrored store path now
+  strips the drive prefix as well as the root, so `C:\x` nests under the
+  store instead of `join` replacing the store root — which made store and
+  live the same path. A new planner guard also refuses any entry whose two
+  sides resolve to the same file (a self-mapping such as `"/x" = "/x"`),
+  which would otherwise replace the file with a link to itself.
 - Piping output into a reader that stops early no longer crashes or invents an
   error. `symify completions fish | head` aborted outright (`clap_complete`
   panics on a failed write, and the release profile turns that into SIGABRT);
