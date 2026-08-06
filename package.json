@@ -28,6 +28,6 @@
         "codegen:check": "npm run codegen && git diff --exit-code -- crates/lib/symify-core/src/model/generated.rs"
     },
     "devDependencies": {
-        "@types/node": "^25.3.5"
+        "@types/node": "^26.1.2"
     }
 }
