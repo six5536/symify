@@ -54,7 +54,9 @@ Bare `symify` (no command) prints help and exits 0.
   `symify sync -V` works).
 - `completions <shell>` — writes a completion script to stdout. Generated from
   the clap definition, so it cannot drift from the CLI. `man` does the same
-  for a roff man page and is hidden: it exists for packaging, not daily use.
+  for a roff man page — per-verb COMMANDS, EXIT STATUS, and FILES sections on
+  top of `clap_mangen`'s output — and is hidden: it exists for packaging, not
+  daily use.
   Both names are in the `SUBCOMMANDS` shadow list, without which the bare-path
   shortcut would rewrite `symify completions bash` to
   `symify add completions bash`. Both also render into a buffer before
@@ -80,7 +82,9 @@ Bare `symify` (no command) prints help and exits 0.
   refused).
 - `--json` — machine-readable output (every config-reading verb; not
   `completions`/`man`, which read no config and take neither `--json` nor
-  `-c`).
+  `-c`). The per-verb field reference is
+  [README → JSON output](/README.md#json-output); this file records only the
+  fields whose semantics need contract detail (notes, inactive mappings).
 
 # Config mutation (`add` / `remove`)
 

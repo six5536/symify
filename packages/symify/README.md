@@ -30,7 +30,8 @@ cargo install symify
 ```sh
 symify add ~/.zshrc      # move it into ~/dotfiles and replace it with a link
 symify list              # see what's tracked
-symify status            # show what each entry will do
+symify status            # report the state of each entry
+symify diff              # show what differs, as content diffs
 symify sync              # adopt your live files into the store
 symify deploy            # on a new machine, recreate links from the store
 ```

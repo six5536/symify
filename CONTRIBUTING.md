@@ -210,6 +210,23 @@ trusted-publisher configuration with it.
 crates.io still uses a token (`CARGO_REGISTRY_TOKEN`); it does not require a
 one-time password, so it works unattended.
 
+### Adding a platform package
+
+A new `@six5536/symify-<os>-<cpu>` package needs setup **before** the release
+that first ships it:
+
+1. Publish a `0.0.0` placeholder by hand (see above — one `npm publish` of the
+   new package with an OTP), so the name exists.
+2. Attach a trusted publisher to it on npmjs.com, pointing at this repository
+   and `release.yml`. Without this the release's publish step fails.
+3. Add the package to the launcher's `optionalDependencies` and the release
+   workflow's build matrix and publish loops. (`verify-version` discovers
+   `packages/*` itself — no change needed there.)
+
+Until the next release publishes a real version, `npm ci` fails on the new
+optional dependency (the `npm install` note under Prerequisites). That window
+is expected; land the change and the release together or in quick succession.
+
 ### Version consistency
 
 `npm run verify-version [version]` checks that the Cargo workspace, the

@@ -41,3 +41,7 @@ Credentials: npm uses trusted publishing (OIDC) — no token; the packages'
 and **must not be unpublished** (removing a package's only version can take
 its trusted-publisher configuration with it). crates.io uses
 `CARGO_REGISTRY_TOKEN`.
+
+A new platform package needs its `0.0.0` placeholder published and a trusted
+publisher attached **before** the release that first ships it; the steps are
+in [CONTRIBUTING → Adding a platform package](/CONTRIBUTING.md).

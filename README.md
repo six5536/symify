@@ -84,7 +84,7 @@ aside to `<name>.<timestamp>.bak` before linking, so nothing is lost. Run
 ## Configuration
 
 `[settings]` sets the defaults; each `[mappings.<name>]` can override `live`,
-`store`, `mode`, or `conflict`.
+`store`, `mode`, `conflict`, or `backup_keep`.
 
 ```toml
 [settings]
@@ -92,6 +92,7 @@ live = "~"            # where links/copies appear
 store = "~/dotfiles"  # where the real content lives
 mode = "symlink"      # symlink | copy (copy = independent copy, kept in sync)
 conflict = "backup"   # skip | replace (overwrite, no backup) | backup (.<timestamp>.bak)
+# backup_keep = 5     # keep only the newest N backups per path (default: keep all)
 
 [mappings.dotfiles.links]
 ".config/fish/config.fish" = ""              # "" or true: mirror the key under store
@@ -200,6 +201,43 @@ symify completions bash > ~/.local/share/bash-completion/completions/symify
 
 A man page ships in the archives attached to each
 [GitHub release](https://github.com/six5536/symify/releases).
+
+### JSON output
+
+Every config-reading verb takes `--json` and prints one JSON object on
+stdout; exit codes are unchanged. The shapes:
+
+- `sync` / `deploy` — `{ verb, dry_run, entries, summary }`. Each entry
+  carries `mapping`, `key`, `live`, `store`, `mode`, an `outcome`
+  (`applied`, `applied-drift`, `ok`, `disabled`, `skipped`, `conflict`,
+  `failed`), the `action` taken (`adopt`, `relink`, `link`, `push`, `pull`;
+  present only when applied), an optional human-readable `detail`, per-file
+  counts `copied`, `backed_up`, `removed`, and a `drift` flag. `removed`
+  counts both `replace`-policy deletions and old backups pruned by
+  `backup_keep`. `summary` totals `changed`, `ok`, `skipped`, `disabled`,
+  `conflicts`, `failed`.
+- `status` — `{ entries, summary }`. Each entry carries a `status` label:
+  `ok`, `unadopted`, `wrong-target`, `differs`, `live-missing`,
+  `store-missing`, `missing`, `disabled`, or `failed` (plus optional
+  `detail`). `summary` totals `clean`, `drift`, `failed`.
+- `diff` — as `status`, plus per entry a `files` array of
+  `{ live, store, state }` with `state` one of `differs`, `live-only`,
+  `store-only`. Paths and states only — content hunks are human-output only.
+- `list` — `{ mappings }`. Each mapping has `name`, `live`, `store`, `mode`,
+  `conflict`, its `entries` (`key`, `live`, `store`), and an `inactive`
+  field naming the unmatched condition when a machine condition doesn't
+  match.
+- `add` — `{ action: "add", mapping, key, file, status, adopt, dry_run }`,
+  where `status` reports the config edit (`added`, `replaced`, `unchanged`,
+  or `would-add` under `--dry-run`), `adopt` is the adoption outcome word,
+  and `file` names the config file edited (absent on `--dry-run`).
+  `remove` — `{ action: "remove", mapping, key, files, restored, dry_run }`,
+  where `files` lists the config files the key was removed from.
+- The run and query verbs add `inactive_mappings` and `shared_targets`
+  arrays when there is anything to report (see the sections above).
+
+Pre-1.0, these shapes may change in minor versions; fields may be added at
+any time, so ignore unknown keys.
 
 ## Safety
 
