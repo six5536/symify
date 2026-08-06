@@ -9,7 +9,7 @@ symify is pre-1.0, minor versions may contain breaking changes.
 Every released tag needs its own section here. The release workflow refuses to
 publish a version it cannot find a heading for.
 
-## [Unreleased]
+## [0.2.0] - 2026-08-06
 
 ### Added
 
@@ -42,6 +42,10 @@ publish a version it cannot find a heading for.
   ends). A non-matching mapping is inactive: runs skip it with a one-line
   note and exit 0, `list` marks it, `--json` reports it under
   `inactive_mappings`, and `add`/`remove` refuse it.
+- The man page now documents every verb's flags and positionals, plus EXIT
+  STATUS and FILES sections; `--help` gains a closing pointer to the config
+  location, exit codes, and docs. The README documents every verb's `--json`
+  fields.
 
 ### Changed
 
@@ -112,6 +116,6 @@ First release.
 Prerelease of `0.1.0`, published to validate the release pipeline end to end.
 Functionally identical to `0.1.0`.
 
-[Unreleased]: https://github.com/six5536/symify/compare/v0.1.0...HEAD
+[0.2.0]: https://github.com/six5536/symify/releases/tag/v0.2.0
 [0.1.0]: https://github.com/six5536/symify/releases/tag/v0.1.0
 [0.1.0-rc.1]: https://github.com/six5536/symify/releases/tag/v0.1.0-rc.1
