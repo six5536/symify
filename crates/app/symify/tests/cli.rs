@@ -304,9 +304,14 @@ fn add_file_outside_live_uses_absolute_key() {
 
     fx.cmd("add").arg(&outside).assert().success();
     assert!(is_symlink(&outside)); // adopted in place via an absolute key
-    // toml_edit writes the absolute key as a basic string, so on Windows the
-    // config carries the backslash-escaped form.
-    assert!(fx.config_text().contains(&toml_path(&outside)));
+    // The key's TOML encoding is toml_edit's choice: for a backslash-bearing
+    // Windows path it writes a literal string ('C:\…', raw), where a basic
+    // string would carry doubled backslashes — accept either.
+    let text = fx.config_text();
+    assert!(
+        text.contains(&outside.display().to_string()) || text.contains(&toml_path(&outside)),
+        "config should carry the absolute key, got: {text}"
+    );
     // The content must land nested under the store root (root/drive stripped),
     // not at the key's own path — that would make store == live and lose the
     // file to a self-link.
