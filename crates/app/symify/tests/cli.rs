@@ -35,8 +35,8 @@ impl Fx {
             &config,
             format!(
                 "[settings]\nlive = \"{}\"\nstore = \"{}\"\nmode = \"symlink\"\nconflict = \"{conflict}\"\n\n{body}",
-                live.display(),
-                store.display(),
+                toml_path(&live),
+                toml_path(&store),
             ),
         )
         .unwrap();
@@ -60,8 +60,8 @@ impl Fx {
             &config,
             format!(
                 "[settings]\nlive = \"{}\"\nstore = \"{}\"\nmode = \"copy\"\nconflict = \"{conflict}\"\n\n[mappings.dotfiles.links]\n{}\n",
-                live.display(),
-                store.display(),
+                toml_path(&live),
+                toml_path(&store),
                 links.join("\n"),
             ),
         )
@@ -91,6 +91,12 @@ impl Fx {
         c.arg(verb).arg("-c").arg(&self.config);
         c
     }
+}
+
+/// Render a path for embedding in a TOML basic string: double the backslashes
+/// so Windows paths survive escape parsing (`\U` starts a unicode escape).
+fn toml_path(p: &Path) -> String {
+    p.display().to_string().replace('\\', "\\\\")
 }
 
 /// Test symlink on any platform: Unix `symlink`, or the target-kind-aware
@@ -1008,7 +1014,7 @@ fn shared_store_fx() -> Fx {
     );
     let live_b = fx.live.parent().unwrap().join("liveB");
     std::fs::create_dir_all(&live_b).unwrap();
-    let text = fx.config_text().replace("LIVEB", &live_b.to_string_lossy());
+    let text = fx.config_text().replace("LIVEB", &toml_path(&live_b));
     std::fs::write(&fx.config, text).unwrap();
     fx
 }
@@ -1052,9 +1058,7 @@ fn shared_live_path_is_noted() {
         "[mappings.dotfiles.links]\n\"x\" = \"store-x\"\n\"LIVE/x\" = \"store-y\"\n",
         "backup",
     );
-    let text = fx
-        .config_text()
-        .replace("LIVE/x", &fx.lp("x").to_string_lossy());
+    let text = fx.config_text().replace("LIVE/x", &toml_path(&fx.lp("x")));
     std::fs::write(&fx.config, text).unwrap();
 
     let out = fx.cmd("status").assert(); // exit governed by entry states only
