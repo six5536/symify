@@ -35,8 +35,8 @@ impl Fx {
             &config,
             format!(
                 "[settings]\nlive = \"{}\"\nstore = \"{}\"\nmode = \"symlink\"\nconflict = \"{conflict}\"\n\n{body}",
-                live.display(),
-                store.display(),
+                toml_path(&live),
+                toml_path(&store),
             ),
         )
         .unwrap();
@@ -60,8 +60,8 @@ impl Fx {
             &config,
             format!(
                 "[settings]\nlive = \"{}\"\nstore = \"{}\"\nmode = \"copy\"\nconflict = \"{conflict}\"\n\n[mappings.dotfiles.links]\n{}\n",
-                live.display(),
-                store.display(),
+                toml_path(&live),
+                toml_path(&store),
                 links.join("\n"),
             ),
         )
@@ -91,6 +91,12 @@ impl Fx {
         c.arg(verb).arg("-c").arg(&self.config);
         c
     }
+}
+
+/// Render a path for embedding in a TOML basic string: double the backslashes
+/// so Windows paths survive escape parsing (`\U` starts a unicode escape).
+fn toml_path(p: &Path) -> String {
+    p.display().to_string().replace('\\', "\\\\")
 }
 
 /// Test symlink on any platform: Unix `symlink`, or the target-kind-aware
@@ -298,7 +304,22 @@ fn add_file_outside_live_uses_absolute_key() {
 
     fx.cmd("add").arg(&outside).assert().success();
     assert!(is_symlink(&outside)); // adopted in place via an absolute key
-    assert!(fx.config_text().contains(&outside.display().to_string()));
+    // toml_edit writes the absolute key as a basic string, so on Windows the
+    // config carries the backslash-escaped form.
+    assert!(fx.config_text().contains(&toml_path(&outside)));
+    // The content must land nested under the store root (root/drive stripped),
+    // not at the key's own path — that would make store == live and lose the
+    // file to a self-link.
+    let nested: PathBuf = outside
+        .components()
+        .filter(|c| {
+            !matches!(
+                c,
+                std::path::Component::Prefix(_) | std::path::Component::RootDir
+            )
+        })
+        .collect();
+    assert_eq!(std::fs::read(fx.store.join(nested)).unwrap(), b"o");
 }
 
 #[test]
@@ -1008,7 +1029,7 @@ fn shared_store_fx() -> Fx {
     );
     let live_b = fx.live.parent().unwrap().join("liveB");
     std::fs::create_dir_all(&live_b).unwrap();
-    let text = fx.config_text().replace("LIVEB", &live_b.to_string_lossy());
+    let text = fx.config_text().replace("LIVEB", &toml_path(&live_b));
     std::fs::write(&fx.config, text).unwrap();
     fx
 }
@@ -1052,9 +1073,7 @@ fn shared_live_path_is_noted() {
         "[mappings.dotfiles.links]\n\"x\" = \"store-x\"\n\"LIVE/x\" = \"store-y\"\n",
         "backup",
     );
-    let text = fx
-        .config_text()
-        .replace("LIVE/x", &fx.lp("x").to_string_lossy());
+    let text = fx.config_text().replace("LIVE/x", &toml_path(&fx.lp("x")));
     std::fs::write(&fx.config, text).unwrap();
 
     let out = fx.cmd("status").assert(); // exit governed by entry states only

@@ -61,6 +61,9 @@ what it will act on.
   be a single file, not a directory, on either side. A leaf like `/etc/hosts`
   is fine; `/etc` (a tree) is refused. This preserves the absolute-key feature
   while preventing system-tree captures, even under `sudo`.
+- **Same-file.** Refuse an entry whose `live` and `store` resolve to the same
+  path (a self-mapping like `"/x" = "/x"`) — acting on it would replace the
+  file with a link to itself and destroy the content.
 
 **Config validation** — at resolve time, a mapping whose `live` and `store`
 resolve to the same directory is rejected outright (every entry would be both
