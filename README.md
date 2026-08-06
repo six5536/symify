@@ -206,7 +206,9 @@ A man page ships in the archives attached to each
 symify can move and delete files, so it holds itself to a few rules:
 
 - It only ever touches the exact paths in your config; it never scans a
-  directory or tracks files you didn't list.
+  directory or tracks files you didn't list. (The sole scan: with
+  `backup_keep` set, it looks beside a target for that entry's own `.bak`
+  siblings to prune — the only files that scan can delete.)
 - It refuses to act on a protected root (`/`, your home directory, or a
   mapping's own `live`/`store` root), and anything outside your `live` root must
   be a single file, not a directory — so a stray `symify add ~` or `add /etc`
@@ -215,7 +217,9 @@ symify can move and delete files, so it holds itself to a few rules:
 - `conflict = "replace"` is the only setting that deletes without a backup. When
   a run would recursively delete a directory, symify asks first (`[y/N]`); pass
   `-y`/`--yes` to skip the prompt, which is required when output isn't a
-  terminal (pipes, `--json`, CI). The default `backup` policy never deletes.
+  terminal (pipes, `--json`, CI). The default `backup` policy deletes nothing
+  on its own; with `backup_keep` set it prunes that entry's oldest `.bak`
+  files when writing a new backup (see Backups & History).
 
 To report a security issue, see [SECURITY.md](SECURITY.md).
 

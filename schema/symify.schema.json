@@ -150,7 +150,7 @@
         },
         "os": {
           "$ref": "#/$defs/MachineMatch",
-          "description": "Operating systems this mapping applies to: \"linux\", \"macos\" or \"windows\" (Rust's std::env::consts::OS values), exact match. On other machines the mapping is inactive. Absent = all."
+          "description": "Operating systems this mapping applies to: \"linux\", \"macos\" or \"windows\" (Rust's std::env::consts::OS values), matched case-insensitively with no globs. On other machines the mapping is inactive. Absent = all."
         },
         "host": {
           "$ref": "#/$defs/MachineMatch",

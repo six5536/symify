@@ -21,7 +21,10 @@ acknowledge the report and coordinate a fix and a disclosure date with you.
 ## Scope
 
 symify moves, links, and (under `conflict = "replace"`) deletes files, so its
-safety model counts as security: it never discovers files, refuses protected
-roots, refuses to run as root without `--allow-root`, and confirms unrecoverable
-deletes. The README "Safety" section documents the whole model. Anything that
-demonstrates a way around those guarantees is in scope.
+safety model counts as security: it never discovers files (with one narrow
+exception: `backup_keep` scans a target's parent directory for that entry's own
+`<name>.<timestamp>.bak` siblings, to prune the oldest — the only files that
+scan can ever delete), refuses protected roots, refuses to run as root without
+`--allow-root`, and confirms unrecoverable deletes. The README "Safety" section
+documents the whole model. Anything that demonstrates a way around those
+guarantees is in scope.

@@ -283,7 +283,7 @@ impl ::std::convert::From<::std::vec::Vec<::std::string::String>> for MachineMat
 #[doc = "      \"$ref\": \"#/$defs/Mode\""]
 #[doc = "    },"]
 #[doc = "    \"os\": {"]
-#[doc = "      \"description\": \"Operating systems this mapping applies to: \\\"linux\\\", \\\"macos\\\" or \\\"windows\\\" (Rust's std::env::consts::OS values), exact match. On other machines the mapping is inactive. Absent = all.\","]
+#[doc = "      \"description\": \"Operating systems this mapping applies to: \\\"linux\\\", \\\"macos\\\" or \\\"windows\\\" (Rust's std::env::consts::OS values), matched case-insensitively with no globs. On other machines the mapping is inactive. Absent = all.\","]
 #[doc = "      \"$ref\": \"#/$defs/MachineMatch\""]
 #[doc = "    },"]
 #[doc = "    \"store\": {"]
@@ -319,7 +319,7 @@ pub struct Mapping {
     #[doc = "Link mechanism for this mapping (overrides settings.mode)."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub mode: ::std::option::Option<Mode>,
-    #[doc = "Operating systems this mapping applies to: \"linux\", \"macos\" or \"windows\" (Rust's std::env::consts::OS values), exact match. On other machines the mapping is inactive. Absent = all."]
+    #[doc = "Operating systems this mapping applies to: \"linux\", \"macos\" or \"windows\" (Rust's std::env::consts::OS values), matched case-insensitively with no globs. On other machines the mapping is inactive. Absent = all."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub os: ::std::option::Option<MachineMatch>,
     #[doc = "Backing repository for this mapping (overrides settings.store)."]
