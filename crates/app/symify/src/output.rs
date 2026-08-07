@@ -1288,16 +1288,22 @@ mod tests {
         }
     }
 
+    /// Entry paths come from `join`, so on Windows they carry `\`; normalise
+    /// to `/` so one snapshot serves every platform.
+    fn native_slashes(buf: Vec<u8>) -> String {
+        String::from_utf8(buf).unwrap().replace('\\', "/")
+    }
+
     #[test]
     fn list_human_with_and_without_entries() {
         let cfg = list_config();
         let mut brief = Vec::new();
         render_list(&mut brief, &cfg, false, false).unwrap();
-        insta::assert_snapshot!("list_human_brief", String::from_utf8(brief).unwrap());
+        insta::assert_snapshot!("list_human_brief", native_slashes(brief));
 
         let mut full = Vec::new();
         render_list(&mut full, &cfg, true, false).unwrap();
-        insta::assert_snapshot!("list_human_entries", String::from_utf8(full).unwrap());
+        insta::assert_snapshot!("list_human_entries", native_slashes(full));
     }
 
     #[test]
@@ -1320,12 +1326,15 @@ mod tests {
         assert_eq!(m["mode"], "symlink");
         assert_eq!(m["conflict"], "backup");
         let entries = m["entries"].as_array().unwrap();
+        // Expected paths built with the same `join`, so the platform's
+        // separator matches on both sides.
+        let joined = |root: &str, rest: &str| Path::new(root).join(rest).display().to_string();
         let bashrc = entries.iter().find(|e| e["key"] == ".bashrc").unwrap();
-        assert_eq!(bashrc["live"], "/home/user/.bashrc");
-        assert_eq!(bashrc["store"], "/store/dots/.bashrc");
+        assert_eq!(bashrc["live"], joined("/home/user", ".bashrc"));
+        assert_eq!(bashrc["store"], joined("/store/dots", ".bashrc"));
         // Explicit string value redirects the store side.
         let vimrc = entries.iter().find(|e| e["key"] == ".vimrc").unwrap();
-        assert_eq!(vimrc["store"], "/store/dots/vim/vimrc");
+        assert_eq!(vimrc["store"], joined("/store/dots", "vim/vimrc"));
     }
 
     // ----- add / remove --------------------------------------------------
