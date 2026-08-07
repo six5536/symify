@@ -841,15 +841,27 @@ mod tests {
             PathBuf::from("/tmp/xdg/symify/symify.toml")
         );
 
-        // An empty XDG_CONFIG_HOME falls back to ~/.config.
+        // An empty XDG_CONFIG_HOME falls back to ~/.config. $HOME steers
+        // home_dir only on Unix; on Windows `directories` resolves the home
+        // via the known-folder API, which env vars cannot redirect — so pin
+        // the home on Unix and assert only the shape elsewhere.
         unsafe {
             std::env::set_var("XDG_CONFIG_HOME", "");
+            #[cfg(unix)]
             std::env::set_var("HOME", "/home/tester");
         }
-        assert_eq!(home_dir().unwrap(), PathBuf::from("/home/tester"));
+        #[cfg(unix)]
+        {
+            assert_eq!(home_dir().unwrap(), PathBuf::from("/home/tester"));
+            assert_eq!(
+                config_base_dir().unwrap(),
+                PathBuf::from("/home/tester/.config/symify")
+            );
+        }
+        #[cfg(not(unix))]
         assert_eq!(
             config_base_dir().unwrap(),
-            PathBuf::from("/home/tester/.config/symify")
+            home_dir().unwrap().join(".config").join("symify")
         );
     }
 
