@@ -65,7 +65,9 @@ try {
   for (const [i, tgz] of tarballs.entries()) {
     const scratch = join(base, `x${i}`);
     mkdirSync(scratch, { recursive: true });
-    const tar = run("tar", ["-xzf", join(base, tgz), "-C", scratch]);
+    // Relative paths, cwd'd into the temp dir: GNU tar (git-bash on the
+    // Windows runner) reads the drive colon in C:\... as a remote-host spec.
+    const tar = run("tar", ["-xzf", tgz, "-C", `x${i}`], { cwd: base });
     if (tar.status !== 0) {
       fail(`tar failed on ${tgz}: ${tar.stderr}`);
     }
