@@ -667,7 +667,12 @@ mod tests {
             [mappings.a.links]
             x = true"#);
         let r = resolve_t(c).unwrap();
-        assert_eq!(r.mappings[0].live, PathBuf::from("/live")); // from settings
+        // Compare through the same absolutise resolve applies: on Windows a
+        // rootful-but-driveless `/live` gains the CWD drive.
+        assert_eq!(
+            r.mappings[0].live,
+            std::path::absolute(Path::new("/live")).unwrap() // from settings
+        );
         assert_eq!(r.mappings[0].mode, Mode::Symlink); // mapping wins over settings
     }
 
@@ -717,18 +722,21 @@ mod tests {
 
     #[test]
     fn expand_path_handles_tilde_abs_and_relative() {
-        let home = Path::new("/home/test");
-        assert_eq!(expand_path("~", Some(home)).unwrap(), home);
+        // Native absolute fixtures: a unix-style `/home/test` is drive-relative
+        // on Windows, so expand_path would absolutise it onto the CWD drive.
+        let home = std::env::temp_dir().join("home-test");
+        assert_eq!(expand_path("~", Some(&home)).unwrap(), home);
         assert_eq!(
-            expand_path("~/dotfiles", Some(home)).unwrap(),
+            expand_path("~/dotfiles", Some(&home)).unwrap(),
             home.join("dotfiles")
         );
+        let abs = std::env::temp_dir().join("absolute-path");
         assert_eq!(
-            expand_path("/absolute/path", Some(home)).unwrap(),
-            PathBuf::from("/absolute/path")
+            expand_path(&abs.display().to_string(), Some(&home)).unwrap(),
+            abs
         );
         // relative becomes absolute (anchored at cwd)
-        assert!(expand_path("rel/dir", Some(home)).unwrap().is_absolute());
+        assert!(expand_path("rel/dir", Some(&home)).unwrap().is_absolute());
     }
 
     #[test]
