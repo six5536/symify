@@ -9,6 +9,15 @@ symify is pre-1.0, minor versions may contain breaking changes.
 Every released tag needs its own section here. The release workflow refuses to
 publish a version it cannot find a heading for.
 
+## [0.2.1] - 2026-08-07
+
+Functionally identical to [0.2.0], whose publish failed partway: the Windows
+npm package had no trusted publisher attached, so 0.2.0 reached four npm
+platform packages but never the `symify` launcher or crates.io. This is the
+release that actually ships the 0.2.0 changes, plus release-pipeline
+hardening (per-target smoke tests of the built binaries and the packed npm
+launcher).
+
 ## [0.2.0] - 2026-08-06
 
 ### Added
@@ -122,6 +131,7 @@ First release.
 Prerelease of `0.1.0`, published to validate the release pipeline end to end.
 Functionally identical to `0.1.0`.
 
+[0.2.1]: https://github.com/six5536/symify/releases/tag/v0.2.1
 [0.2.0]: https://github.com/six5536/symify/releases/tag/v0.2.0
 [0.1.0]: https://github.com/six5536/symify/releases/tag/v0.1.0
 [0.1.0-rc.1]: https://github.com/six5536/symify/releases/tag/v0.1.0-rc.1
