@@ -22,6 +22,8 @@
         "coverage:summary": "cargo +nightly llvm-cov nextest --workspace --ignore-filename-regex 'generated\\.rs' --summary-only",
         "coverage:check": "cargo +nightly llvm-cov clean --workspace && cargo +nightly llvm-cov nextest --workspace --no-report && cargo +nightly llvm-cov report --summary-only --ignore-filename-regex 'generated\\.rs|crates/app' --fail-under-lines 90 && cargo +nightly llvm-cov report --summary-only --ignore-filename-regex 'generated\\.rs|crates/lib' --fail-under-lines 90",
         "test:launcher": "node --test packages/symify/test/*.test.js",
+        "smoke": "node scripts/release-smoke.mjs",
+        "smoke:launcher": "node scripts/launcher-smoke.mjs",
         "set-version": "node scripts/set-version.mjs",
         "verify-version": "node scripts/verify-version.mjs",
         "release": "node scripts/release.mjs",

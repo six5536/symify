@@ -51,6 +51,11 @@ npm run coverage:check   # enforce the gate: line coverage >= 90% per crate
 
 npm run test:launcher   # node test for the npm launcher shim
 
+npm run smoke           # behavioural smoke of a release binary (build --release first)
+npm run smoke:launcher  # npm-pack the launcher + host platform package, run the
+                        # real binary through it (stage the binary into
+                        # packages/symify-<host>/bin/ first)
+
 npm run verify-version  # every version in the tree agrees (16 locations)
 npm run release <ver>   # bump + verify + commit + tag (does not push)
 ```

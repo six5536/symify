@@ -29,6 +29,10 @@ Everything is wrapped as npm scripts (defined in
 - Packaging: `npm run test:launcher`, `npm run verify-version` (16 locations
   must agree), `npm run release <version>` (bumps, verifies, commits, tags —
   never pushes).
+- Smoke: `npm run smoke` runs a release binary through an adopt round-trip;
+  `npm run smoke:launcher` npm-packs the launcher plus the host's platform
+  package and runs the real binary through the shim. Release CI runs both
+  per buildable target.
 
 Two traps:
 

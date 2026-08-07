@@ -132,8 +132,11 @@ by both `ci.yml` and `release.yml`, so the release gate cannot drift from CI.
   unrelated PR.
 - **`release.yml`** (tag `v*`): verify the tag against every version in the
   tree and against a `CHANGELOG.md` section → run `checks.yml` in full →
-  build the five binaries (cross for musl, native for macOS and Windows) and
-  assert the Linux ones are static → dry-run every publish → publish platform
+  build the five binaries (cross for musl, native for macOS and Windows),
+  assert the Linux ones are static, smoke-test each binary the runner can
+  execute (adopt round-trip via `release-smoke.mjs`; linux-arm64 cannot run
+  on the x64 runner) and run the packed launcher end-to-end where the
+  package matches the host → dry-run every publish → publish platform
   packages, then the launcher, then `cargo publish --workspace --locked` →
   create a GitHub Release with archives (`.tar.gz`; `.zip` for Windows), a
   man page, completions and `SHA256SUMS`. Prerelease tags publish

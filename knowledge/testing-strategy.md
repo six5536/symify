@@ -39,6 +39,14 @@ the commands and the coverage gate are in [CONTRIBUTING](/CONTRIBUTING.md).
   configs round-trip through the generated types.
 - **npm launcher.** A JS test that resolves + spawns a stub binary, and
   errors cleanly when no platform package matches.
+- **Release smoke.** `scripts/release-smoke.mjs` runs a compiled release
+  binary through an adopt round-trip (store content + clean `status --json`);
+  `scripts/launcher-smoke.mjs` npm-packs the launcher and the host's platform
+  package into a temp `node_modules` and runs the real binary through the
+  shim — catching a binary missing from a `files` manifest and broken
+  exit-code forwarding. The release build job runs the first on every target
+  its runner can execute and the second where the package matches the host;
+  locally: `npm run smoke` / `npm run smoke:launcher`.
 
 # Key choices
 
