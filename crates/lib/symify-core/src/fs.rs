@@ -795,7 +795,12 @@ mod tests {
         let base = dir.path();
         let src = base.join("src");
         std::fs::create_dir(&src).unwrap();
+        // `:` is a filename character on Unix but Windows' stream separator,
+        // so it stays a Unix-only case.
+        #[cfg(unix)]
         let names = ["a file.txt", "naïve→data", "a:b", "emoji😀"];
+        #[cfg(not(unix))]
+        let names = ["a file.txt", "naïve→data", "emoji😀"];
         for name in names {
             std::fs::write(src.join(name), name.as_bytes()).unwrap();
         }
