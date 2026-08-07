@@ -1,6 +1,6 @@
 {
   "name": "symify",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Keep a working location in sync with a managed backing repository via symlinks or copies.",
   "homepage": "https://github.com/six5536/symify#readme",
   "repository": {
@@ -36,11 +36,11 @@
     "node": ">=18"
   },
   "optionalDependencies": {
-    "@six5536/symify-linux-x64": "0.2.0",
-    "@six5536/symify-linux-arm64": "0.2.0",
-    "@six5536/symify-darwin-x64": "0.2.0",
-    "@six5536/symify-darwin-arm64": "0.2.0",
-    "@six5536/symify-win32-x64": "0.2.0"
+    "@six5536/symify-linux-x64": "0.2.1",
+    "@six5536/symify-linux-arm64": "0.2.1",
+    "@six5536/symify-darwin-x64": "0.2.1",
+    "@six5536/symify-darwin-arm64": "0.2.1",
+    "@six5536/symify-win32-x64": "0.2.1"
   },
   "scripts": {
     "test": "node --test test/*.test.js"

@@ -1,6 +1,6 @@
 {
   "name": "@six5536/symify-win32-x64",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Prebuilt symify binary for win32-x64.",
   "homepage": "https://github.com/six5536/symify#readme",
   "repository": {
