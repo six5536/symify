@@ -15,7 +15,7 @@
 #[allow(missing_docs)]
 pub mod generated;
 
-pub use generated::{Config, Conflict, LinkValue, Mapping, Mode, Settings};
+pub use generated::{Config, Conflict, LinkValue, MachineMatch, Mapping, Mode, Settings};
 
 /// Default link mechanism when neither `[settings]` nor a mapping specifies one.
 pub const DEFAULT_MODE: Mode = Mode::Symlink;

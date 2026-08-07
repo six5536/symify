@@ -11,8 +11,8 @@ Adding a file takes one command:
 `symify ~/.zshrc` moves it into the repository and links it back, so it keeps
 working in place.
 
-It works two ways: **symlinks** (the default) or **file sync**, which keeps
-independent copies up to date on both sides.
+It works two ways: **symlinks** (the default) or **copies**, kept up to date
+incrementally on both sides.
 
 Managing dotfiles is a common use,
 but symify works just as well for any files or folders you want to mirror, back
@@ -27,22 +27,25 @@ There are two locations:
 ## Install
 
 ```sh
-npm install -g symify   # prebuilt binary, Linux/macOS
+npm install -g symify   # prebuilt binary, Linux/macOS/Windows
 cargo install symify    # from source, needs a Rust toolchain
 ```
 
-Prebuilt binaries cover Linux and macOS on `x64` and `arm64`. The Linux builds
-are statically linked against musl, so they need no particular glibc version and
-run on Alpine too.
+Prebuilt binaries cover Linux and macOS on `x64` and `arm64`, and Windows on
+`x64`. The Linux builds are statically linked against musl, so they need no
+particular glibc version and run on Alpine too. On Windows-on-ARM the `x64`
+binary runs under the OS's emulation, but npm only installs it under an `x64`
+build of Node — otherwise grab the release archive or `cargo install symify`.
 
-**Windows is not supported yet.** The code is written to be portable and the
-platform-specific paths exist, but no Windows binary is built or tested, so
-building from source there is at your own risk.
+**On Windows**, creating symlinks needs privilege: enable Developer Mode, or
+run elevated. Without it, symlink-mode entries fail with guidance while
+`mode = "copy"` works everywhere. Symlink mode expects an NTFS filesystem.
 
 ## Quickstart
 
-For the common dotfiles use case, simply add your first file, and symify creates its config file on first use at
- `~/.config/symify/symify.toml`, with the defaults `live = ~`, `store = ~/dotfiles`:
+Add your first file. symify writes its config on first use to
+`~/.config/symify/symify.toml`, defaulting to `live = ~` and
+`store = ~/dotfiles`:
 
 ```sh
 symify add ~/.zshrc      # move it into ~/dotfiles and replace it with a link
@@ -81,14 +84,15 @@ aside to `<name>.<timestamp>.bak` before linking, so nothing is lost. Run
 ## Configuration
 
 `[settings]` sets the defaults; each `[mappings.<name>]` can override `live`,
-`store`, `mode`, or `conflict`.
+`store`, `mode`, `conflict`, or `backup_keep`.
 
 ```toml
 [settings]
 live = "~"            # where links/copies appear
 store = "~/dotfiles"  # where the real content lives
-mode = "symlink"      # symlink | sync (sync = independent copy)
+mode = "symlink"      # symlink | copy (copy = independent copy, kept in sync)
 conflict = "backup"   # skip | replace (overwrite, no backup) | backup (.<timestamp>.bak)
+# backup_keep = 5     # keep only the newest N backups per path (default: keep all)
 
 [mappings.dotfiles.links]
 ".config/fish/config.fish" = ""              # "" or true: mirror the key under store
@@ -96,6 +100,52 @@ conflict = "backup"   # skip | replace (overwrite, no backup) | backup (.<timest
 "profile.md" = "fixed/in/store/file.md"      # explicit path under store
 "old.conf" = false                           # disabled
 ```
+
+### Per-machine setups
+
+A mapping can declare which machines it applies to with `os` and `host`
+(string or list). On other machines the mapping is **inactive**: runs skip it
+with a one-line note and still exit 0, so one config serves a mixed fleet.
+
+```toml
+[mappings.linux-only]
+os = "linux"                  # "linux" | "macos" | "windows"
+
+[mappings.work]
+host = ["wrk-*", "*.corp"]    # case-insensitive; * allowed at the ends
+```
+
+Hostnames match case-insensitively, and `*` may open and/or close a pattern
+(not sit in the middle). Both keys together must both match. `add`/`remove`
+refuse an inactive mapping — edit the config file directly for cross-machine
+changes.
+
+### Sharing one store file between paths
+
+Explicit values may point several live paths at the same store path — across
+mappings or within one:
+
+```toml
+[mappings.a.links]
+"profile" = "shared/profile"
+
+[mappings.b]
+live = "~/other"
+[mappings.b.links]
+"prof.d/profile" = "shared/profile"
+```
+
+In `symlink` mode this gives one source of truth surfaced at several places:
+`deploy` links every live path to the store file, and an edit through any of
+them is an edit of the store. In `copy` mode it is a fan-out: `deploy`
+installs independent copies of the one store file. **Avoid `sync` for shared
+copy-mode entries** — entries are planned independently, so diverging copies
+overwrite the shared store file last-writer-wins. symify prints a
+`note: N entries share store path …` line (and a `shared_targets` array in
+`--json`) whenever entries collide like this, including the same-live-path
+case, which is usually a config accident. Notes never change the exit code.
+
+### Files and merging
 
 symify reads `~/.config/symify/symify.toml` and any `~/.config/symify/conf.d/*.toml`
 files, with later files winning key by key. The JSON Schema at
@@ -112,6 +162,7 @@ autocomplete and validation, and documents every field.
 | `sync`           | `live` → `store` | Bring your live files into the store.              |
 | `deploy`         | `store` → `live` | Set a machine up from the store.                   |
 | `status`         | read-only        | Report the state of each entry.                    |
+| `diff`           | read-only        | Show what differs, as content diffs.               |
 | `completions <shell>` | read-only   | Print a shell completion script (bash, zsh, fish, PowerShell, elvish). |
 
 - `symify <path>` is shorthand for `symify add <path>`, since adding is the
@@ -119,22 +170,27 @@ autocomplete and validation, and documents every field.
   use `symify add status` to disambiguate.)
 - `add`/`remove` take `-m <mapping>` (defaults to your sole mapping) and edit the
   config in place, preserving comments. `remove --no-restore` leaves the link.
-- `sync`/`deploy`/`status`/`list` take `-m <mapping>` (repeatable) to act on
-  specific mappings; omit it for all.
-- `sync`/`deploy`/`add`/`remove` take `--dry-run`; every command takes `--json`
-  and `-c <file>` (repeatable; replaces the usual config locations). There's no
-  separate `init`; any command creates a default config if none exists.
-- In `sync` mode, `sync`/`deploy` copy only changed files (a size+mtime
+- `sync`/`deploy`/`status`/`diff`/`list` take `-m <mapping>` (repeatable) to
+  act on specific mappings; omit it for all.
+- `sync`/`deploy`/`add`/`remove` take `--dry-run`. Every verb that reads your
+  config — all of the above plus `status`, `diff` and `list` — takes `--json` and
+  `-c <file>` (repeatable; replaces the usual config locations) and creates a
+  default config if none exists, so there's no separate `init`. `completions`
+  reads no config and takes none of these.
+- In `copy` mode, `sync`/`deploy` copy only changed files (a size+mtime
   quick-check, with mtime preserved on copy). They are **additive** — they never
   delete, so if you remove a file from the source, delete the stale copy on the
   other side yourself (`rm` / `git rm`). Extra flags:
   - `--checksum` — compare file content exactly instead of by size+mtime.
   - `--modify-window <SECONDS>` — treat mtimes within N seconds as equal, for
-    coarse-granularity filesystems (default 0 = exact). `status` accepts
-    `--checksum`/`--modify-window` too, so its report matches a run.
+    coarse-granularity filesystems (default 0 = exact). `status` and `diff`
+    accept `--checksum`/`--modify-window` too, so their reports match a run.
+- `diff` shows unified content diffs (store side as `-`, your live edits as
+  `+`), plus `only in live/store:` lines for one-sided files. Binary and
+  oversized (>1 MiB) files are summarised in one line, never dumped.
 
-Run `symify <command> --help` for the full reference and exit codes, or
-`symify -V` for the version.
+Run `symify <command> --help` for the full flag reference, or `symify -V` for the
+version. Every command exits `0` when clean, `1` on drift, and `2` on error.
 
 To enable completions, write the script somewhere your shell reads. For example,
 with bash:
@@ -146,12 +202,51 @@ symify completions bash > ~/.local/share/bash-completion/completions/symify
 A man page ships in the archives attached to each
 [GitHub release](https://github.com/six5536/symify/releases).
 
+### JSON output
+
+Every config-reading verb takes `--json` and prints one JSON object on
+stdout; exit codes are unchanged. The shapes:
+
+- `sync` / `deploy` — `{ verb, dry_run, entries, summary }`. Each entry
+  carries `mapping`, `key`, `live`, `store`, `mode`, an `outcome`
+  (`applied`, `applied-drift`, `ok`, `disabled`, `skipped`, `conflict`,
+  `failed`), the `action` taken (`adopt`, `relink`, `link`, `push`, `pull`;
+  present only when applied), an optional human-readable `detail`, per-file
+  counts `copied`, `backed_up`, `removed`, and a `drift` flag. `removed`
+  counts both `replace`-policy deletions and old backups pruned by
+  `backup_keep`. `summary` totals `changed`, `ok`, `skipped`, `disabled`,
+  `conflicts`, `failed`.
+- `status` — `{ entries, summary }`. Each entry carries a `status` label:
+  `ok`, `unadopted`, `wrong-target`, `differs`, `live-missing`,
+  `store-missing`, `missing`, `disabled`, or `failed` (plus optional
+  `detail`). `summary` totals `clean`, `drift`, `failed`.
+- `diff` — as `status`, plus per entry a `files` array of
+  `{ live, store, state }` with `state` one of `differs`, `live-only`,
+  `store-only`. Paths and states only — content hunks are human-output only.
+- `list` — `{ mappings }`. Each mapping has `name`, `live`, `store`, `mode`,
+  `conflict`, its `entries` (`key`, `live`, `store`), and an `inactive`
+  field naming the unmatched condition when a machine condition doesn't
+  match.
+- `add` — `{ action: "add", mapping, key, file, status, adopt, dry_run }`,
+  where `status` reports the config edit (`added`, `replaced`, `unchanged`,
+  or `would-add` under `--dry-run`), `adopt` is the adoption outcome word,
+  and `file` names the config file edited (absent on `--dry-run`).
+  `remove` — `{ action: "remove", mapping, key, files, restored, dry_run }`,
+  where `files` lists the config files the key was removed from.
+- The run and query verbs add `inactive_mappings` and `shared_targets`
+  arrays when there is anything to report (see the sections above).
+
+Pre-1.0, these shapes may change in minor versions; fields may be added at
+any time, so ignore unknown keys.
+
 ## Safety
 
 symify can move and delete files, so it holds itself to a few rules:
 
 - It only ever touches the exact paths in your config; it never scans a
-  directory or tracks files you didn't list.
+  directory or tracks files you didn't list. (The sole scan: with
+  `backup_keep` set, it looks beside a target for that entry's own `.bak`
+  siblings to prune — the only files that scan can delete.)
 - It refuses to act on a protected root (`/`, your home directory, or a
   mapping's own `live`/`store` root), and anything outside your `live` root must
   be a single file, not a directory — so a stray `symify add ~` or `add /etc`
@@ -160,21 +255,29 @@ symify can move and delete files, so it holds itself to a few rules:
 - `conflict = "replace"` is the only setting that deletes without a backup. When
   a run would recursively delete a directory, symify asks first (`[y/N]`); pass
   `-y`/`--yes` to skip the prompt, which is required when output isn't a
-  terminal (pipes, `--json`, CI). The default `backup` policy never deletes.
+  terminal (pipes, `--json`, CI). The default `backup` policy deletes nothing
+  on its own; with `backup_keep` set it prunes that entry's oldest `.bak`
+  files when writing a new backup (see Backups & History).
 
 To report a security issue, see [SECURITY.md](SECURITY.md).
 
 ## Backups & History
 
-Your store is just a directory, so history comes for free: keep it under **git**
-and commit after each `sync`, and `git log` gives you full, deduplicated,
-pushable history. If your store isn't a git repository, point a backup tool such
-as [restic](https://restic.net/) or [borg](https://www.borgbackup.org/) at it.
+Your store is just a directory, so history comes for free. Keep it under **git**,
+commit after each `sync`, and `git log` is your history. If your store isn't a
+git repository, point a backup tool such as [restic](https://restic.net/) or
+[borg](https://www.borgbackup.org/) at it.
 
 symify focuses on keeping your two locations in sync and leaves long-term
 archiving to those purpose-built tools. Its own safety net is the
 `<name>.<timestamp>.bak` it writes before overwriting a file under
-`conflict = "backup"`.
+`conflict = "backup"`. Those backups accumulate on repeated conflicts; set
+`backup_keep = 5` (in `[settings]` or per mapping) to keep only the newest
+five per path — old ones are deleted when a new backup is written, and
+`--dry-run` shows the deletions. By default every backup is kept. Pruning a
+backup that is a non-empty *directory* counts as an unrecoverable delete, so
+it asks `[y/N]` first — scripted runs need `-y`/`--yes` for that case, like
+any other recursive delete.
 
 ## Development
 

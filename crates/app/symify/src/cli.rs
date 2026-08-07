@@ -9,6 +9,12 @@ use clap::{Args, Parser, Subcommand};
 // `version` feeds the man page header and `--help`; the built-in `-V` flag stays
 // disabled because we render the version ourselves (see `main::run`).
 #[command(name = "symify", about, long_about = None, version, disable_version_flag = true)]
+#[command(
+    after_help = "Config: ~/.config/symify/symify.toml plus conf.d/*.toml drop-ins, \
+    created on first use; -c/--config replaces discovery.\n\
+    Exit codes: 0 clean, 1 drift, 2 error.\n\
+    Docs: https://github.com/six5536/symify"
+)]
 pub struct Cli {
     /// The command to run.
     #[command(subcommand)]
@@ -32,6 +38,8 @@ pub enum Command {
     Deploy(RunArgs),
     /// Show what each file will do, without changing anything.
     Status(QueryArgs),
+    /// Show what differs, as content diffs (read-only).
+    Diff(QueryArgs),
     /// Start tracking a file: add it to a mapping and adopt it.
     Add(AddArgs),
     /// Stop tracking a file, restoring a standalone copy by default.
@@ -75,11 +83,11 @@ pub struct RunArgs {
     #[arg(short = 'y', long = "yes")]
     pub yes: bool,
 
-    /// In `sync` mode, compare file content exactly instead of by size+mtime.
+    /// In `copy` mode, compare file content exactly instead of by size+mtime.
     #[arg(long)]
     pub checksum: bool,
 
-    /// In `sync` mode, treat mtimes within this many seconds as equal (for
+    /// In `copy` mode, treat mtimes within this many seconds as equal (for
     /// coarse-granularity filesystems). Default 0 (exact).
     #[arg(long, value_name = "SECONDS", default_value_t = 0)]
     pub modify_window: u64,
@@ -100,11 +108,11 @@ pub struct QueryArgs {
     #[arg(short = 'm', long = "mapping", value_name = "MAPPING")]
     pub mapping: Vec<String>,
 
-    /// In `sync` mode, compare file content exactly instead of by size+mtime.
+    /// In `copy` mode, compare file content exactly instead of by size+mtime.
     #[arg(long)]
     pub checksum: bool,
 
-    /// In `sync` mode, treat mtimes within this many seconds as equal (for
+    /// In `copy` mode, treat mtimes within this many seconds as equal (for
     /// coarse-granularity filesystems). Default 0 (exact).
     #[arg(long, value_name = "SECONDS", default_value_t = 0)]
     pub modify_window: u64,
@@ -175,6 +183,7 @@ const SUBCOMMANDS: &[&str] = &[
     "sync",
     "deploy",
     "status",
+    "diff",
     "add",
     "remove",
     "rm",
@@ -283,6 +292,7 @@ mod tests {
             "sync",
             "deploy",
             "status",
+            "diff",
             "add",
             "remove",
             "rm",

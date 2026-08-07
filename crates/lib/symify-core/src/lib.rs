@@ -1,6 +1,6 @@
 //! symify core: config loading, planning, and filesystem execution.
 //!
-//! See `specs/ARCHITECTURE.md` for the design. The crate is layered:
+//! See `knowledge/architecture.md` for the design. The crate is layered:
 //! [`config`] loads and merges TOML into a resolved model, [`mod@plan`] turns
 //! that plus current filesystem state into a pure list of actions, and the
 //! executor applies them. The planner never mutates the filesystem.
@@ -21,6 +21,9 @@
 //! fs::create_dir_all(&store)?;
 //! fs::write(live.join(".bashrc"), b"export EDITOR=vim\n")?;
 //!
+//! // TOML basic strings treat `\` as an escape, so double any Windows
+//! // separators when embedding a path.
+//! let toml_path = |p: &std::path::Path| p.display().to_string().replace('\\', "\\\\");
 //! let cfg = dir.path().join("symify.toml");
 //! fs::write(&cfg, format!(
 //!     "[settings]\n\
@@ -28,11 +31,12 @@
 //!      store = \"{}\"\n\n\
 //!      [mappings.dotfiles.links]\n\
 //!      \".bashrc\" = true\n",
-//!     live.display(),
-//!     store.display(),
+//!     toml_path(&live),
+//!     toml_path(&store),
 //! ))?;
 //!
-//! let resolved = config::load_config(&[cfg])?;
+//! let machine = config::MachineContext::with_host("wrk-01");
+//! let resolved = config::load_config(&[cfg], &machine)?;
 //! let planned = plan::plan(&resolved, Verb::Sync, RunOptions::default())?;
 //! let outcomes = plan::execute(&planned, &SystemClock, /* dry_run = */ true);
 //! assert_eq!(outcomes.len(), planned.len());
@@ -52,6 +56,7 @@ pub mod status;
 
 pub use error::{Error, Result};
 pub use plan::{
-    Action, ActionKind, FsOp, Outcome, Planned, RunOptions, Verb, entry_paths, execute, plan,
+    Action, ActionKind, DiffPair, DiffState, FsOp, Outcome, Planned, RunOptions, SharedSide,
+    SharedTarget, Verb, diff_pairs, entry_paths, execute, plan, shared_targets,
 };
 pub use status::{StatusEntry, StatusLabel, status};

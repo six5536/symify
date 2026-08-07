@@ -2,6 +2,68 @@
 
 This file records the notable changes of each release of symify. git-cliff writes the notes of each release from the commits of the release, and the notes of the releases up to 0.2.1 were written by hand. While symify is pre-1.0, a minor version might contain breaking changes.
 
+## [0.2.0] - 2026-08-07
+
+### Added
+
+- Shared-target notes: when several entries resolve to the same store path
+  (one source of truth surfaced at several live paths) or the same live path
+  (usually a config accident), the verbs print a
+  `note: N entries share … path` line and `--json` carries a
+  `shared_targets` array. Informational only — exit codes are unchanged. The
+  README documents the shared-store-file pattern, including why `sync`
+  should be avoided for shared copy-mode entries.
+- Windows support (x64): prebuilt binaries via `npm i -g symify` and a `.zip`
+  release archive, with CI running the test suite on Windows. Creating
+  symlinks needs Developer Mode or elevation; without it, symlink entries
+  fail with guidance and `mode = "copy"` works unprivileged.
+- `backup_keep = N` (settings or per mapping): when a new
+  `<name>.<timestamp>.bak` backup is written, the oldest beyond `N` are
+  deleted (the new backup counts). Opt-in — absent or `0` keeps every backup,
+  as before. Prunes are visible in `--dry-run` and only ever match symify's
+  own exact backup pattern for that path. Pruning a non-empty *directory*
+  backup goes through the usual delete confirmation, so scripted runs need
+  `--yes` for that case; they also count toward the `removed` total in
+  output.
+- `symify diff`: a read-only verb showing what `status` only labels — unified
+  content diffs per changed file (store side as `-`, live as `+`), `only in
+  live/store:` lines for one-sided files, and one-line summaries for binary,
+  oversized, or metadata-only differences. Takes the `status` flag set;
+  `--json` reports per-file states without content.
+- Per-machine mappings: `os` and `host` keys on `[mappings.<name>]` (string
+  or list; hostnames match case-insensitively with `*` allowed at a pattern's
+  ends). A non-matching mapping is inactive: runs skip it with a one-line
+  note and exit 0, `list` marks it, `--json` reports it under
+  `inactive_mappings`, and `add`/`remove` refuse it.
+- The man page now documents every verb's flags and positionals, plus EXIT
+  STATUS and FILES sections; `--help` gains a closing pointer to the config
+  location, exit codes, and docs. The README documents every verb's `--json`
+  fields.
+
+### Changed
+
+- **Breaking:** the `sync` mode is renamed to `copy`, ending the name
+  collision with the `sync` verb. `mode = "sync"` in a config now fails to
+  load (`unknown variant 'sync', expected 'symlink' or 'copy'`) — change it
+  to `mode = "copy"`; behaviour is identical. The per-entry `mode` field in
+  `--json` output reports `"copy"` accordingly.
+
+### Fixed
+
+- Absolute keys resolve correctly on Windows: the mirrored store path now
+  strips the drive prefix as well as the root, so `C:\x` nests under the
+  store instead of `join` replacing the store root — which made store and
+  live the same path. A new planner guard also refuses any entry whose two
+  sides resolve to the same file (a self-mapping such as `"/x" = "/x"`),
+  which would otherwise replace the file with a link to itself.
+- Piping output into a reader that stops early no longer crashes or invents an
+  error. `symify completions fish | head` aborted outright (`clap_complete`
+  panics on a failed write, and the release profile turns that into SIGABRT);
+  `status`, `list` and `man` printed `error: I/O error at <stdout>: Broken pipe`
+  and exited 2 once their output outgrew the buffer. A closed pipe is now a
+  silent exit 0. One consequence worth knowing: `symify status | head` reports 0
+  even when there is drift, because the run never finished.
+
 ## [0.1.0] - 2026-08-04
 
 First release.

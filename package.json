@@ -15,11 +15,13 @@
     "dev": "cargo run -p symify --",
     "lint": "cargo clippy --workspace",
     "fmt": "cargo fmt --all",
+    "smoke": "node scripts/release-smoke.mjs",
+    "smoke:launcher": "node scripts/launcher-smoke.mjs",
     "verify-version": "node scripts/verify-version.mjs",
     "codegen": "cargo typify --no-builder --additional-derive Clone --additional-derive PartialEq --additional-derive Eq schema/symify.schema.json --output crates/lib/symify-core/src/model/generated.rs",
     "codegen:check": "npm run codegen && git diff --exit-code -- crates/lib/symify-core/src/model/generated.rs"
   },
   "devDependencies": {
-    "@types/node": "^25.3.5"
+    "@types/node": "^26.1.2"
   }
 }
