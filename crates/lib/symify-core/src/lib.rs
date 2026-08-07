@@ -21,6 +21,9 @@
 //! fs::create_dir_all(&store)?;
 //! fs::write(live.join(".bashrc"), b"export EDITOR=vim\n")?;
 //!
+//! // TOML basic strings treat `\` as an escape, so double any Windows
+//! // separators when embedding a path.
+//! let toml_path = |p: &std::path::Path| p.display().to_string().replace('\\', "\\\\");
 //! let cfg = dir.path().join("symify.toml");
 //! fs::write(&cfg, format!(
 //!     "[settings]\n\
@@ -28,8 +31,8 @@
 //!      store = \"{}\"\n\n\
 //!      [mappings.dotfiles.links]\n\
 //!      \".bashrc\" = true\n",
-//!     live.display(),
-//!     store.display(),
+//!     toml_path(&live),
+//!     toml_path(&store),
 //! ))?;
 //!
 //! let machine = config::MachineContext::with_host("wrk-01");
