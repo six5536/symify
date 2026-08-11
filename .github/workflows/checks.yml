@@ -45,7 +45,7 @@ jobs:
           node-version: 24
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2.85.6
+        uses: taiki-e/install-action@v2.85.10
         with:
           tool: cargo-nextest
 
@@ -105,7 +105,7 @@ jobs:
           node-version: 24
 
       - name: Install cargo-llvm-cov and cargo-nextest
-        uses: taiki-e/install-action@v2.85.6
+        uses: taiki-e/install-action@v2.85.10
         with:
           tool: cargo-llvm-cov,cargo-nextest
 
@@ -136,7 +136,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "cargo-typify $version"
       - name: Install cargo-typify
-        uses: taiki-e/install-action@v2.85.6
+        uses: taiki-e/install-action@v2.85.10
         with:
           tool: cargo-typify@${{ steps.typify.outputs.version }}
       - name: Regenerate model and check for drift
