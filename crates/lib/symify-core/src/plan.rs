@@ -3,8 +3,7 @@
 //! [`plan`] is a function of *(resolved config + current filesystem state)*. It
 //! reads the filesystem but never mutates it, emitting an ordered list of
 //! [`Planned`] entries. Each entry's [`Action`] either records a no-op/blocked
-//! state or carries the exact ordered [`FsOp`]s the executor will run. The
-//! per-entry state machine is documented in `knowledge/architecture.md`.
+//! state or carries the exact ordered [`FsOp`]s the executor will run.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -275,7 +274,7 @@ fn plan_entry(
     let (s, d) = resolve_paths(m, key, kind);
 
     // Safety guards: refuse entries that could swallow a root or operate on a
-    // directory outside the live root. See `knowledge/architectural-rules.md`.
+    // directory outside the live root. The README's Safety section lists them.
     if let Some(reason) = guard_reason(m, &s, &d)? {
         return Ok(make(s, d, Action::Failed(reason)));
     }
@@ -317,7 +316,7 @@ fn apply_retention(action: Action, keep: u64) -> Result<Action> {
 
 /// The oldest existing backups of `target` beyond `keep - 1`. Matches exactly
 /// `<leaf>.<14 ASCII digits>.bak` beside `target` — the one, narrow exception
-/// to "symify never discovers files" (see `knowledge/architectural-rules.md`):
+/// to "symify never discovers files" (the README's Safety section):
 /// anchored to the entry's own leaf and symify's own artifact pattern, it can
 /// never match user files, other entries, or hand-renamed backups.
 fn stale_backups(target: &Path, keep: u64) -> Result<Vec<PathBuf>> {

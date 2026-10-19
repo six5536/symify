@@ -233,7 +233,7 @@ fn digest(path: &Path, include_mode: bool) -> Result<blake3::Hash> {
 /// Permission bits used for `copy`-mode equality. On Unix these are the mode's
 /// permission/setuid/sticky bits. Elsewhere the constant `0`: Windows has no
 /// mode bits, and its read-only attribute is noise, not signal — there the
-/// quick-check is size + mtime only (PLAN-012 decision 2).
+/// quick-check is size + mtime only.
 #[cfg(unix)]
 fn perm_bits(md: &std::fs::Metadata) -> u32 {
     use std::os::unix::fs::PermissionsExt;

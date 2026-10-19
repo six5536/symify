@@ -346,7 +346,7 @@ jobs:
             stage="dist/stage/symify-$VERSION-$pkg"
             mkdir -p "$stage"
             install -m 0755 "artifacts/symify-$pkg/symify" "$stage/symify"
-            cp README.md LICENSE CHANGELOG.md "$stage/"
+            cp README.md LICENSE "$stage/"
             cp -r dist/share "$stage/share"
             tar -czf "dist/out/symify-$VERSION-$pkg.tar.gz" -C dist/stage "symify-$VERSION-$pkg"
           done
@@ -355,7 +355,7 @@ jobs:
           stage="dist/stage/symify-$VERSION-win32-x64"
           mkdir -p "$stage"
           install -m 0755 "artifacts/symify-win32-x64/symify.exe" "$stage/symify.exe"
-          cp README.md LICENSE CHANGELOG.md "$stage/"
+          cp README.md LICENSE "$stage/"
           cp -r dist/share "$stage/share"
           (cd dist/stage && zip -qr "../out/symify-$VERSION-win32-x64.zip" "symify-$VERSION-win32-x64")
           cd dist/out && sha256sum ./*.tar.gz ./*.zip > SHA256SUMS && cat SHA256SUMS

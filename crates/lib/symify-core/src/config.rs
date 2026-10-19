@@ -3,7 +3,7 @@
 //! Pipeline: [`discover`] picks the file list, [`load`] parses and merges them
 //! into one [`Config`], and [`resolve`] expands paths and applies defaults to
 //! produce a [`ResolvedConfig`] the planner can consume. [`load_config`] runs all
-//! three. See `knowledge/configuration.md`.
+//! three. The README's Configuration section describes the format.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -583,7 +583,7 @@ mod tests {
 
     #[test]
     fn sync_mode_is_rejected() {
-        // `mode = "sync"` was renamed to `"copy"` (PLAN-008, hard break); an
+        // `mode = "sync"` was renamed to `"copy"` (a hard break in 0.2.0); an
         // old config must fail to load, and the error names the valid variants.
         let err = toml::from_str::<Config>("[settings]\nmode = \"sync\"\n").unwrap_err();
         assert!(

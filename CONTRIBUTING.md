@@ -27,4 +27,4 @@ npm install
 npm run build:all
 ```
 
-`.github/workflows/publish.yml` is the release: it builds the five binaries, smoke-tests them, publishes the crates and the packages, and creates the GitHub release with the notes that the tag's message carries. `CHANGELOG.md` holds the notes of every release.
+`.github/workflows/publish.yml` is the release: it builds the five binaries, smoke-tests them, publishes the crates and the packages, and creates the GitHub release with the notes that the tag's message carries. The GitHub releases hold the notes of every release: they are the project's changelog.
