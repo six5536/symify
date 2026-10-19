@@ -1,6 +1,10 @@
 # Changelog
 
-This file records the notable changes of each release of symify. git-cliff writes the notes of each release from the commits of the release, and the notes of the releases up to 0.2.1 were written by hand. While symify is pre-1.0, a minor version might contain breaking changes.
+This file records the notable changes of each release of symify. git-cliff writes the notes of each release from the commits of the release, and the notes of the releases up to 0.2.2 were written by hand. While symify is pre-1.0, a minor version might contain breaking changes.
+
+## [0.2.2] - 2026-10-19
+
+This release changes nothing in symify. It is the first that the public repository publishes from an export of the project's own repository, and its crates and packages are the first that reach crates.io and npm through trusted publishing alone, with no stored token.
 
 ## [0.2.1] - 2026-08-07
 

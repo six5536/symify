@@ -1,6 +1,6 @@
 # symify
 
-[![CI](https://github.com/six5536/symify/actions/workflows/ci.yml/badge.svg)](https://github.com/six5536/symify/actions/workflows/ci.yml)
+[![Publish](https://github.com/six5536/symify/actions/workflows/publish.yml/badge.svg)](https://github.com/six5536/symify/actions/workflows/publish.yml)
 [![crates.io](https://img.shields.io/crates/v/symify.svg)](https://crates.io/crates/symify)
 [![npm](https://img.shields.io/npm/v/symify.svg)](https://www.npmjs.com/package/symify)
 [![docs.rs](https://img.shields.io/docsrs/symify-core)](https://docs.rs/symify-core)
@@ -284,14 +284,13 @@ any other recursive delete.
 Toolchains are pinned in `.mise.toml` and `rust-toolchain.toml` (managed with
 [mise](https://mise.jdx.dev/)).
 
+
 ```sh
 npm run build           # cargo build --workspace
-npm run test            # cargo nextest run --workspace
 npm run lint            # cargo clippy --workspace
 npm run fmt             # cargo fmt --all
 npm run codegen         # regenerate the Rust config model from the JSON Schema
-npm run coverage:check  # enforce the per-crate coverage gate
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full setup, the test layers, the
-schema/codegen workflow, and how releases are cut.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the setup, and for how to report a
+bug or ask for a feature.
